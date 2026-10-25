@@ -18,8 +18,6 @@ import (
 	"time"
 )
 
-const dateFmt = "2006-01-02"
-
 // Tier is one step of a tiered tariff: [From, To) kWh per full period.
 type Tier struct {
 	From  *big.Rat `json:"from_kwh"`

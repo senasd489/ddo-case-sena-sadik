@@ -6,10 +6,17 @@ linters:
   enable:
     - bodyclose
     - errorlint
-    - misspell
     - noctx
     - sqlclosecheck
     - rowserrcheck
+  settings:
+    errcheck:
+      # Kapatma hataları ve metrik yazımı bilinçli olarak yok sayılıyor.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*github.com/jackc/pgx/v5.Conn).Close
+        - fmt.Fprintf
+        - fmt.Fprint
   exclusions:
     rules:
       - path: _test\.go

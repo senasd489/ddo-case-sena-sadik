@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -48,12 +49,12 @@ jobs:
           args: --timeout=5m
       - name: Test (race + coverage)
         run: |
-          go test -race -count=1 -coverpkg=./internal/... -coverprofile=coverage.out ./... | tee test.log
-          echo "## Test kapsamı" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          go tool cover -func=coverage.out | tail -25 >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          go tool cover -func=coverage.out | tail -1
+          go test -race -count=1 -coverpkg=./internal/... -coverprofile=coverage.out ./... 2>&1 | tee test.log
+          echo "Geçen test sayısı: $(go test -count=1 -v ./... 2>/dev/null | grep -c -- '--- PASS')"
+      - name: Coverage report (domain ≥ 70%)
+        run: |
+          python3 ../scripts/domain-coverage.py coverage.out 70 | tee coverage.md
+          { echo "## Test kapsamı"; cat coverage.md; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: coverage
@@ -76,28 +77,44 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
-  docker:
-    name: Docker images + compose smoke
+  e2e:
+    name: Docker images · compose · make verify · k6
     runs-on: ubuntu-latest
     needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
-      - name: Build images & start stack
+      - name: Build images & start stack (cold)
         run: |
           cp .env.example .env
-          time docker compose up --build -d
-          time ./scripts/wait-healthy.sh 300
+          start=$(date +%s)
+          docker compose up --build -d
+          ./scripts/wait-healthy.sh 300
+          echo "### Soğuk başlangıç: $(( $(date +%s) - start )) sn (derleme dahil)" >> "$GITHUB_STEP_SUMMARY"
           docker compose ps -a
-      - name: Health
-        run: curl -fsS http://localhost:8080/health && curl -fsS http://localhost:3000/ >/dev/null
-      - name: Non-root check
+      - name: Non-root & image sizes
         run: |
-          for s in api frontend; do
-            uid=$(docker compose exec -T $s id -u 2>/dev/null || docker inspect --format '{{.Config.User}}' $(docker compose ps -q $s))
-            echo "$s user: $uid"; test "$uid" != "0" && test "$uid" != "root"
+          for s in api simulator frontend; do
+            u=$(docker inspect --format '{{.Config.User}}' $(docker compose ps -q $s))
+            echo "$s user=$u"; test -n "$u" && test "$u" != "0" && test "$u" != "root"
           done
-      - name: Image sizes
-        run: docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep enerjihat
+          docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep -i enerjihat | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: make verify
+        run: |
+          docker compose --profile verify run --rm --build verify | tee verify.txt
+          { echo "## make verify"; grep -E '^\|' verify.txt; tail -1 verify.txt; } >> "$GITHUB_STEP_SUMMARY"
+      - name: k6 (kısa yük testi)
+        run: |
+          docker run --rm -i --network enerjihat_default -e API_URL=http://api:8080 -e INGEST_TOKEN=$(grep ^INGEST_TOKEN .env | cut -d= -f2) \
+            -e DURATION=30s grafana/k6:0.54.0 run --summary-trend-stats "avg,med,p(95),p(99),max" - < scripts/load/k6.js | tee k6.txt
+          { echo "## k6 (30 sn)"; echo '```'; grep -E 'http_req_duration|scenario|http_req_failed|http_reqs|ingest_batch' k6.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Chaos (DB down → 503 → up → 200)
+        run: |
+          docker compose stop db
+          sleep 5
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/health)" = "503"
+          docker compose start db
+          ./scripts/wait-healthy.sh 120
+          echo "Kaos: DB durdu → /health 503, döndü → 200" >> "$GITHUB_STEP_SUMMARY"
       - name: Logs on failure
         if: failure()
         run: docker compose logs --tail=200

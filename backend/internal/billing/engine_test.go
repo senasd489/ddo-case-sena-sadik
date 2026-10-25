@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -207,13 +208,13 @@ func TestComputeIsDeterministic(t *testing.T) {
 func TestTariffCoverageErrors(t *testing.T) {
 	ps, pe := d(2026, 10, 1), d(2026, 11, 1)
 	v := mesken(1, d(2026, 10, 10), nil, [3]string{"1", "2", "3"}, "1")
-	if _, err := Compute(Input{PeriodStart: ps, PeriodEnd: pe, Versions: []TariffVersion{v}}); err != ErrTariffGaps {
+	if _, err := Compute(Input{PeriodStart: ps, PeriodEnd: pe, Versions: []TariffVersion{v}}); !errors.Is(err, ErrTariffGaps) {
 		t.Fatalf("gap at start: %v", err)
 	}
-	if _, err := Compute(Input{PeriodStart: ps, PeriodEnd: pe}); err != ErrNoTariff {
+	if _, err := Compute(Input{PeriodStart: ps, PeriodEnd: pe}); !errors.Is(err, ErrNoTariff) {
 		t.Fatalf("no tariff: %v", err)
 	}
-	if _, err := Compute(Input{PeriodStart: pe, PeriodEnd: ps}); err != ErrBadPeriod {
+	if _, err := Compute(Input{PeriodStart: pe, PeriodEnd: ps}); !errors.Is(err, ErrBadPeriod) {
 		t.Fatalf("bad period: %v", err)
 	}
 }

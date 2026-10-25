@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -74,7 +75,7 @@ func call(method, path, token string, body any, hdr ...string) resp {
 	if !strings.HasPrefix(path, "http") {
 		url = api + path
 	}
-	req, _ := http.NewRequest(method, url, rd)
+	req, _ := http.NewRequestWithContext(context.Background(), method, url, rd)
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)

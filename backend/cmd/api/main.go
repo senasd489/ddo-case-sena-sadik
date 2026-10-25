@@ -160,7 +160,11 @@ func healthcheck() int {
 		addr = "http://127.0.0.1:8080/health"
 	}
 	c := http.Client{Timeout: 3 * time.Second}
-	resp, err := c.Get(addr)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, addr, nil)
+	if err != nil {
+		return 1
+	}
+	resp, err := c.Do(req)
 	if err != nil {
 		return 1
 	}

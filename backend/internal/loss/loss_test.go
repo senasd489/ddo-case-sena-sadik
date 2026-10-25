@@ -133,7 +133,8 @@ func TestPlantIsDeterministic(t *testing.T) {
 		_ = pool.QueryRow(ctx, `SELECT md5(string_agg(concat_ws(',', meter_id, day, active_wh, night_wh, slots), ';' ORDER BY meter_id, day)) FROM consumption_daily`).Scan(&d)
 		return d
 	}
-	if digest() != digest() {
+	first, second := digest(), digest()
+	if first != second {
 		t.Fatal("same seed produced different data")
 	}
 }
