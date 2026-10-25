@@ -15,6 +15,7 @@ import (
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/billing"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/config"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/customers"
+	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/demo"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/dispatch"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/grid"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/httpx"
@@ -138,8 +139,9 @@ func (s *Server) RunBackground(ctx context.Context) {
 // Shutdown releases background resources before the HTTP server stops.
 func (s *Server) Shutdown() {}
 
-// Seed loads demo data once; subsequent runs are no-ops.
-func Seed(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, o seed.Options) error {
+// Seed loads demo data once (grid, accounts, 28 days of history with
+// planted anomalies); subsequent runs are no-ops.
+func Seed(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, o seed.Options, anchor time.Time) error {
 	done, err := seed.AlreadySeeded(ctx, pool)
 	if err != nil {
 		return err
@@ -148,5 +150,8 @@ func Seed(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, o seed.Opti
 		log.Info("seed: already seeded, skipping")
 		return nil
 	}
-	return seed.Run(ctx, pool, log, o)
+	if err := seed.Run(ctx, pool, log, o); err != nil {
+		return err
+	}
+	return demo.History(ctx, pool, log, anchor, o.Seed)
 }

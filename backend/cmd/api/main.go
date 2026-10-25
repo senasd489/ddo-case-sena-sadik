@@ -65,13 +65,13 @@ func run(log *slog.Logger) error {
 		if err := db.Migrate(ctx, pool, log); err != nil {
 			return err
 		}
-		return server.Seed(ctx, pool, log, seedOptions())
+		return server.Seed(ctx, pool, log, seedOptions(), anchor())
 	case "reset":
 		// Demo verisini ilk haline döndürür: şemayı silip yeniden kurar.
 		if err := db.Reset(ctx, pool, log); err != nil {
 			return err
 		}
-		return server.Seed(ctx, pool, log, seedOptions())
+		return server.Seed(ctx, pool, log, seedOptions(), anchor())
 	case "bench-t1":
 		meters := 0
 		if len(os.Args) > 2 {
@@ -131,6 +131,21 @@ func seedOptions() seed.Options {
 		s = 42
 	}
 	return seed.Options{Seed: s, Subscribers: n}
+}
+
+// anchor is the simulation's "today": SIM_ANCHOR (YYYY-MM-DD) or the local date.
+func anchor() time.Time {
+	if v := os.Getenv("SIM_ANCHOR"); v != "" {
+		if t, err := time.Parse("2006-01-02", v); err == nil {
+			return t
+		}
+	}
+	loc, err := time.LoadLocation("Europe/Istanbul")
+	if err != nil {
+		loc = time.FixedZone("TRT", 3*3600)
+	}
+	n := time.Now().In(loc)
+	return time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func newLogger(level string) *slog.Logger {

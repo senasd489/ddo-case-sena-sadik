@@ -29,6 +29,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       SIM_SEED: ${SIM_SEED:-42}
       SEED_SUBSCRIBERS: ${SEED_SUBSCRIBERS:-5000}
+      SIM_ANCHOR: ${SIM_ANCHOR:-}
     depends_on:
       db: { condition: service_healthy }
     restart: "no"
@@ -56,7 +57,9 @@ services:
       API_URL: http://api:8080
       INGEST_TOKEN: ${INGEST_TOKEN}
       SIM_SEED: ${SIM_SEED:-42}
-      SIM_SPEED: ${SIM_SPEED:-60}
+      SIM_BACKFILL: ${SIM_BACKFILL:-48h}
+      SIM_OUTAGE_EVERY: ${SIM_OUTAGE_EVERY:-3m}
+      SIM_ANCHOR: ${SIM_ANCHOR:-}
     depends_on:
       api: { condition: service_healthy }
     restart: unless-stopped

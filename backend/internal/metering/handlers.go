@@ -95,14 +95,22 @@ func (h *Handlers) single(w http.ResponseWriter, r *http.Request) error {
 }
 
 type activeMeter struct {
-	ID           int64     `json:"id"`
-	Kind         string    `json:"kind"`
-	SubscriberID *int64    `json:"subscriber_id,omitempty"`
-	NodeID       *int64    `json:"node_id,omitempty"`
-	InstalledAt  time.Time `json:"installed_at"`
+	ID             int64      `json:"id"`
+	Kind           string     `json:"kind"`
+	SubscriberID   *int64     `json:"subscriber_id,omitempty"`
+	NodeID         *int64     `json:"node_id,omitempty"`
+	Category       *string    `json:"category,omitempty"`
+	Path           []int64    `json:"path"` // direk → … → trafo (ana sayaçta yalnızca trafo)
+	Profile        *string    `json:"sim_profile,omitempty"`
+	InstalledAt    time.Time  `json:"installed_at"`
+	InitialIndexWh int64      `json:"initial_index_wh"`
+	LastReadAt     *time.Time `json:"last_read_at"`
+	LastIndexWh    *int64     `json:"last_index_wh"`
 }
 
-// activeMeters lists active meters (keyset) so the simulator knows what to emit.
+// activeMeters lists active meters (keyset) with what a head-end simulator
+// needs: supply path, category, the last stored register value (to resume
+// after a restart) and the simulation profile.
 func (h *Handlers) activeMeters(w http.ResponseWriter, r *http.Request) error {
 	pg, err := httpx.ParsePage(r, 5000, 50000)
 	if err != nil {
@@ -112,16 +120,23 @@ func (h *Handlers) activeMeters(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	rows, err := h.pool.Query(r.Context(), `SELECT id, kind, subscriber_id, node_id, installed_at FROM meters
-		WHERE removed_at IS NULL AND id > $1 ORDER BY id LIMIT $2`, after, pg.Limit+1)
+	rows, err := h.pool.Query(r.Context(), `
+		WITH RECURSIVE paths AS (
+			SELECT id, ARRAY[id] AS path FROM network_nodes WHERE parent_id IS NULL
+			UNION ALL SELECT n.id, n.id || p.path FROM network_nodes n JOIN paths p ON n.parent_id = p.id
+		)
+		SELECT m.id, m.kind, m.subscriber_id, m.node_id, s.category,
+		       coalesce(pp.path, ARRAY[m.node_id]), sp.profile, m.installed_at, m.initial_index_wh, lr.read_at, lr.active_index_wh
+		FROM meters m
+		LEFT JOIN subscribers s ON s.id = m.subscriber_id
+		LEFT JOIN paths pp ON pp.id = s.pole_id
+		LEFT JOIN sim_profiles sp ON sp.subscriber_id = m.subscriber_id
+		LEFT JOIN LATERAL (SELECT read_at, active_index_wh FROM readings r WHERE r.meter_id = m.id ORDER BY read_at DESC LIMIT 1) lr ON true
+		WHERE m.removed_at IS NULL AND m.id > $1 ORDER BY m.id LIMIT $2`, after, pg.Limit+1)
 	if err != nil {
 		return err
 	}
-	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (activeMeter, error) {
-		var m activeMeter
-		err := row.Scan(&m.ID, &m.Kind, &m.SubscriberID, &m.NodeID, &m.InstalledAt)
-		return m, err
-	})
+	items, err := pgx.CollectRows(rows, pgx.RowToStructByPos[activeMeter])
 	if err != nil {
 		return err
 	}
