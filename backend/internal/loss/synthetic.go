@@ -10,6 +10,25 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Profile is the deterministic consumption profile of a subscriber; the
+// seed's history generator and the live simulator share it, so the history
+// and the streamed readings describe the same household.
+type Profile struct {
+	BaseWh     float64 // ortalama günlük tüketim
+	NightShare float64 // gece (22-06) payı
+	Noise      float64 // günlük göreli dalgalanma
+	Noisy      bool
+}
+
+func ProfileOf(seed uint64, subscriberID int64) Profile {
+	r := rand.New(rand.NewPCG(seed, uint64(subscriberID)*0x9e3779b97f4a7c15+1))
+	p := Profile{BaseWh: 6000 + r.Float64()*8000, NightShare: 0.25 + r.Float64()*0.10, Noise: 0.20}
+	if r.IntN(10) == 0 {
+		p.Noisy, p.Noise = true, 0.6
+	}
+	return p
+}
+
 // Truth is the ground truth of a planted scenario.
 type Truth struct {
 	Thieves     []int64 `json:"thieves"`      // ani düşüş (sayaç baypası), TR-0001
@@ -35,7 +54,6 @@ func (t Truth) Positives() map[int64]string {
 // The same seed always produces the same data.
 func Plant(ctx context.Context, pool *pgxpool.Pool, asOf time.Time, seed uint64) (Truth, error) {
 	asOf = time.Date(asOf.Year(), asOf.Month(), asOf.Day(), 0, 0, 0, 0, time.UTC)
-	rng := rand.New(rand.NewPCG(seed, seed*31+7))
 	const days = 28
 	from := asOf.AddDate(0, 0, -days)
 	recentFrom := asOf.AddDate(0, 0, -7)
@@ -92,7 +110,7 @@ func Plant(ctx context.Context, pool *pgxpool.Pool, asOf time.Time, seed uint64)
 		role[id] = "missing"
 	}
 	for _, s := range subs {
-		if role[s.id] == "" && rng.IntN(10) == 0 {
+		if role[s.id] == "" && ProfileOf(seed, s.id).Noisy {
 			role[s.id] = "noisy"
 			truth.Noisy = append(truth.Noisy, s.id)
 		}
@@ -107,15 +125,12 @@ func Plant(ctx context.Context, pool *pgxpool.Pool, asOf time.Time, seed uint64)
 	headTrue := map[string]map[time.Time]float64{}
 	var dailyRows [][]any
 	for _, s := range subs {
-		base := 6000 + rng.Float64()*8000
+		pr := ProfileOf(seed, s.id)
+		base, nightShare, noise := pr.BaseWh, pr.NightShare, pr.Noise
 		if role[s.id] == "thief" {
 			base *= 3 // kaçak genelde yüksek tüketimli abonede (klima, atölye) görülür
 		}
-		nightShare := 0.25 + rng.Float64()*0.10
-		noise := 0.20
-		if role[s.id] == "noisy" {
-			noise = 0.6
-		}
+		rng := rand.New(rand.NewPCG(seed^0xabcdef, uint64(s.id)))
 		for d := 0; d < days; d++ {
 			day := from.AddDate(0, 0, d)
 			wh := base * (1 + (rng.Float64()*2-1)*noise)

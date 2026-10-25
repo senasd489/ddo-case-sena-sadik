@@ -355,6 +355,14 @@ func RobustZ(x float64, ref []float64, floor float64) float64 {
 	return (x - m) / s
 }
 
+func logs(xs []float64) []float64 {
+	out := make([]float64, len(xs))
+	for i, x := range xs {
+		out[i] = math.Log1p(x)
+	}
+	return out
+}
+
 func round(f float64, p int) float64 {
 	k := math.Pow(10, float64(p))
 	return math.Round(f*k) / k
@@ -412,9 +420,11 @@ func evaluate(series []*subSeries, recentFrom time.Time, o Options, trs map[int6
 			var method string
 			if o.Filters {
 				center, recentC = median(base), median(recent)
-				z = RobustZ(recentC, base, math.Max(0.05*center, 200))
+				// Ev tüketimindeki dalgalanma çarpımsaldır (±%60'lık bir abone de
+				// "normal"dir); bu yüzden robust z logaritmik ölçekte hesaplanır.
+				z = RobustZ(math.Log1p(recentC), logs(base), 0.05)
 				thr = o.DropZ
-				method = "robust_z (medyan/MAD)"
+				method = "robust_z (log ölçekte medyan/MAD)"
 			} else {
 				m, sd := meanStd(base)
 				center, recentC = m, 0
