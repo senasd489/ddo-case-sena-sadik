@@ -15,6 +15,7 @@ import (
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/billing"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/config"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/customers"
+	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/grid"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/httpx"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/idempotency"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/metering"
@@ -62,6 +63,7 @@ func (s *Server) Router() http.Handler {
 				customers.New(s.pool).Mount(r)
 				meter.Mount(r)
 				billing.NewHandlers(s.pool).Mount(r)
+				grid.NewHandlers(s.pool).Mount(r)
 			})
 		})
 	})
