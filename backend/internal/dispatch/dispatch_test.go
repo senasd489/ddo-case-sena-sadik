@@ -333,3 +333,33 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+func TestRestoreSignalsAutoResolve(t *testing.T) {
+	pool := testutil.NewDB(t)
+	subs := subsOnFeeder(t, pool, "TR-0003-F2", 1)
+	r1, _ := Ingest(ctx, pool, sig("last_gasp", subs[0], t0, "rg-1"))
+	o, _ := grid.GetOutage(ctx, pool, r1.OutageID, false)
+	ids, _ := grid.AffectedSubscribers(ctx, pool, o.FaultNodeID)
+	for i, id := range ids {
+		r, err := Ingest(ctx, pool, sig("restore", id, t0.Add(30*time.Minute), fmt.Sprintf("rs-%d", i)))
+		if err != nil || r.Outcome != "restored" {
+			t.Fatalf("restore %d: %+v %v", id, r, err)
+		}
+		if i < len(ids)-1 && r.Status == "resolved" {
+			t.Fatal("resolved before every subscriber was restored")
+		}
+	}
+	o, _ = grid.GetOutage(ctx, pool, r1.OutageID, false)
+	if o.Status != "resolved" || o.AffectedCount != 0 {
+		t.Fatalf("after restores %+v", o)
+	}
+	var mins float64
+	_ = pool.QueryRow(ctx, `SELECT extract(epoch FROM max(restored_at - interrupted_at))/60 FROM outage_affected WHERE outage_id=$1`, o.ID).Scan(&mins)
+	if mins != 30 {
+		t.Fatalf("interruption minutes %v", mins)
+	}
+	r, _ := Ingest(ctx, pool, sig("restore", ids[0], t0.Add(40*time.Minute), "rs-late"))
+	if r.Outcome != "restore_ignored" {
+		t.Fatalf("late restore %+v", r)
+	}
+}

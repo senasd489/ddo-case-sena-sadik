@@ -30,13 +30,14 @@ var outageTransitions = metrics.NewCounter("enerjihat_outage_transitions_total",
 //	unplanned: detected → confirmed → assigned → in_progress → resolved
 //	           detected → resolved (kendiliğinden düzeldi, ör. tekrar kapama)
 //	           assigned → confirmed (ekip geri çekildi)
+//	           assigned → resolved (ekip varmadan enerji geri geldi, ör. sayaçlardan restore)
 //	           detected|confirmed|assigned → cancelled (yanlış alarm)
 //	planned:   scheduled → in_progress → resolved ; scheduled → cancelled
 var transitions = map[string]map[string][]string{
 	"unplanned": {
 		"detected":    {"confirmed", "resolved", "cancelled"},
 		"confirmed":   {"assigned", "resolved", "cancelled"},
-		"assigned":    {"in_progress", "confirmed", "cancelled"},
+		"assigned":    {"in_progress", "confirmed", "resolved", "cancelled"},
 		"in_progress": {"resolved"},
 	},
 	"planned": {

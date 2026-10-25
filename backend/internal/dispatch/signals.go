@@ -69,7 +69,7 @@ func Ingest(ctx context.Context, pool *pgxpool.Pool, s Signal) (*SignalResult, e
 }
 
 func ingestTx(ctx context.Context, tx pgx.Tx, s Signal) (*SignalResult, error) {
-	if s.Source != "call" && s.Source != "last_gasp" {
+	if s.Source != "call" && s.Source != "last_gasp" && s.Source != "restore" {
 		return nil, ErrUnknownSource
 	}
 	if s.ReceivedAt.IsZero() {
@@ -115,6 +115,9 @@ func ingestTx(ctx context.Context, tx pgx.Tx, s Signal) (*SignalResult, error) {
 	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(4444, $1::int)`, lin.FeederID); err != nil {
 		return nil, err
+	}
+	if s.Source == "restore" {
+		return restoreTx(ctx, tx, sigID, s)
 	}
 
 	// Aynı besleyicide açık kesinti: ya zaman penceresinde başlamış ya da bu
@@ -266,4 +269,43 @@ func LowestCommonAncestor(ctx context.Context, tx pgx.Tx, poles []int64) (int64,
 		}
 	}
 	return common[len(common)-1], nil
+}
+
+// restoreTx handles a meter's "power restored" message: the subscriber's
+// interruption ends at received_at, and when no affected subscriber is left
+// without power the outage resolves itself (e.g. a recloser or a field
+// switch restored supply before or while the crew worked).
+func restoreTx(ctx context.Context, tx pgx.Tx, sigID int64, s Signal) (*SignalResult, error) {
+	res := &SignalResult{SignalID: sigID, Outcome: "restore_ignored"}
+	rows, err := tx.Query(ctx, `UPDATE outage_affected a SET restored_at = greatest($2, a.interrupted_at)
+		FROM outages o
+		WHERE o.id = a.outage_id AND a.subscriber_id = $1 AND a.restored_at IS NULL
+		  AND o.status IN ('detected','confirmed','assigned','in_progress')
+		RETURNING a.outage_id`, s.SubscriberID, s.ReceivedAt)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return nil, err
+	}
+	for _, oid := range ids {
+		res.OutageID, res.Outcome = oid, "restored"
+		if _, err := tx.Exec(ctx, `UPDATE outage_signals SET outage_id = $2 WHERE id = $1`, sigID, oid); err != nil {
+			return nil, err
+		}
+		var remaining int
+		if err := tx.QueryRow(ctx, `UPDATE outages SET affected_count = (SELECT count(*) FROM outage_affected WHERE outage_id = $1 AND restored_at IS NULL),
+			updated_at = now() WHERE id = $1 RETURNING affected_count`, oid).Scan(&remaining); err != nil {
+			return nil, err
+		}
+		if remaining == 0 {
+			o, err := grid.TransitionTx(ctx, tx, oid, "resolved", 0, "otomatik: tüm sayaçlardan enerji geldi bildirimi alındı", -1)
+			if err != nil {
+				return nil, err
+			}
+			res.Status = o.Status
+		}
+	}
+	return res, nil
 }
