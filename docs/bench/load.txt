@@ -1,0 +1,8 @@
+# make load (k6, 60 sn, 18 VU: 8 personel + 6 abone + 4 head-end) — 2 vCPU geliştirme makinesi, simülatör aynı anda çalışırken, 2026-10-25T02:48Z
+     checks.........................: 100.00% 74374 out of 74374
+     http_req_duration..............: avg=14.3ms   med=7.41ms   p(95)=34.53ms p(99)=62.8ms   max=3.63s   
+     ✓ { scenario:portal }..........: avg=11.56ms  med=7.4ms    p(95)=35.72ms p(99)=60.79ms  max=204.18ms
+     ✓ { scenario:staff }...........: avg=10.82ms  med=7.34ms   p(95)=32.32ms p(99)=50.86ms  max=231.44ms
+   ✓ http_req_failed................: 0.00%   0 out of 74376
+     http_reqs......................: 74376   1229.578998/s
+   ✓ ingest_batch_duration..........: avg=794.76ms med=766.34ms p(95)=1.75s   p(99)=3.6s     max=3.63s   
