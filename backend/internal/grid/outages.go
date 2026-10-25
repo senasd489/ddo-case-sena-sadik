@@ -214,7 +214,7 @@ func TransitionTx(ctx context.Context, tx pgx.Tx, id int64, to string, by int64,
 	now := time.Now()
 	switch to {
 	case "resolved":
-		if _, err := tx.Exec(ctx, `UPDATE outages SET ended_at = $2 WHERE id = $1`, id, now); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE outages SET ended_at = greatest($2, started_at) WHERE id = $1`, id, now); err != nil {
 			return nil, err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE outage_affected SET restored_at = $2 WHERE outage_id = $1 AND restored_at IS NULL`, id, now); err != nil {
@@ -225,7 +225,7 @@ func TransitionTx(ctx context.Context, tx pgx.Tx, id int64, to string, by int64,
 		if _, err := tx.Exec(ctx, `DELETE FROM outage_affected WHERE outage_id = $1`, id); err != nil {
 			return nil, err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE outages SET ended_at = $2, affected_count = 0 WHERE id = $1`, id, now); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE outages SET ended_at = greatest($2, started_at), affected_count = 0 WHERE id = $1`, id, now); err != nil {
 			return nil, err
 		}
 	case "in_progress":

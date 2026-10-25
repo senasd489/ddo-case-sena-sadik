@@ -305,3 +305,28 @@ func TestSAIDIAndSAIFI(t *testing.T) {
 		t.Fatalf("feeder rel %+v", fr)
 	}
 }
+
+// Henüz başlamamış planlı kesinti iptal edilebilmeli (bitiş < başlangıç kısıtına takılmadan).
+func TestCancelFuturePlannedOutage(t *testing.T) {
+	pool := testutil.NewDB(t)
+	from := time.Now().Add(72 * time.Hour).Truncate(time.Hour)
+	to := from.Add(2 * time.Hour)
+	var o *Outage
+	if err := tx(t, pool, func(tx pgx.Tx) error {
+		var err error
+		o, err = CreateOutageTx(ctx, tx, CreateOutage{Kind: "planned", FaultNodeID: nodeID(t, pool, "TR-0002-F2"), PlannedStart: &from, PlannedEnd: &to})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx(t, pool, func(tx pgx.Tx) error { _, err := TransitionTx(ctx, tx, o.ID, "cancelled", 0, "", -1); return err }); err != nil {
+		t.Fatalf("cancel future planned outage: %v", err)
+	}
+	// İptal edilen planlı kesinti aynı zamana yeni plan yapılmasını engellemez.
+	if err := tx(t, pool, func(tx pgx.Tx) error {
+		_, err := CreateOutageTx(ctx, tx, CreateOutage{Kind: "planned", FaultNodeID: nodeID(t, pool, "TR-0002-F2"), PlannedStart: &from, PlannedEnd: &to})
+		return err
+	}); err != nil {
+		t.Fatalf("re-plan after cancel: %v", err)
+	}
+}
