@@ -11,22 +11,28 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/auth"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/config"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/httpx"
+	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/idempotency"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/metrics"
+	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/seed"
+	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/users"
 )
 
 type Server struct {
 	cfg  config.Config
 	pool *pgxpool.Pool
 	log  *slog.Logger
+	auth *auth.Service
 }
 
 func New(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) *Server {
 	metrics.NewGaugeFunc("enerjihat_db_pool_acquired_conns", "Kullanımdaki DB bağlantıları", func() float64 {
 		return float64(pool.Stat().AcquiredConns())
 	})
-	return &Server{cfg: cfg, pool: pool, log: log}
+	signer := auth.NewSigner(cfg.JWTSecret, cfg.AccessTTL)
+	return &Server{cfg: cfg, pool: pool, log: log, auth: auth.NewService(pool, signer, cfg.RefreshTTL)}
 }
 
 func (s *Server) Router() http.Handler {
@@ -39,7 +45,16 @@ func (s *Server) Router() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(httpx.Timeout(s.cfg.RequestTimeout))
 		r.Route("/api/v1", func(r chi.Router) {
-			// domain routes are mounted here in later steps
+			auth.NewHandlers(s.auth).Mount(r) // herkese açık: login/refresh/logout
+
+			// Buradan sonrası kimlik doğrulama ister; her route kendi rol listesini belirtir.
+			r.Group(func(r chi.Router) {
+				r.Use(auth.Authenticate(s.auth.Signer()))
+				// Idempotency-Key gönderilen her POST için ilk cevap saklanır ve tekrar oynatılır.
+				r.Use(idempotency.Middleware(s.pool, false))
+				r.Get("/auth/me", auth.Me)
+				users.New(s.pool).Mount(r)
+			})
 		})
 	})
 	r.NotFound(httpx.H(func(http.ResponseWriter, *http.Request) error { return httpx.ErrNotFound }))
@@ -76,8 +91,15 @@ func (s *Server) RunBackground(ctx context.Context) { <-ctx.Done() }
 // Shutdown releases background resources before the HTTP server stops.
 func (s *Server) Shutdown() {}
 
-// Seed loads demo data (filled in step 2).
-func Seed(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) error {
-	log.Info("seed: nothing to do yet")
-	return nil
+// Seed loads demo data once; subsequent runs are no-ops.
+func Seed(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, o seed.Options) error {
+	done, err := seed.AlreadySeeded(ctx, pool)
+	if err != nil {
+		return err
+	}
+	if done {
+		log.Info("seed: already seeded, skipping")
+		return nil
+	}
+	return seed.Run(ctx, pool, log, o)
 }
