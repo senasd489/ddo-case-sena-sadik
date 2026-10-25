@@ -137,7 +137,7 @@ Aynı besleyici + 15 dk penceresi (ya da aboneyi zaten etkileyen açık kesinti)
 
 ## Test, CI ve ölçümler
 
-* **88 Go testi** (alt testler dahil; birim + gerçek PostgreSQL ile entegrasyon), `-race` ile. **Çekirdek paketler (metering, billing, grid, dispatch, loss) deyim kapsamı %77,0** (`scripts/domain-coverage.py`; CI %70 altında kırmızı). Her test şablon veritabanından ~50 ms'de kopyalanan kendi veritabanını kullanır.
+* **89 Go testi** (alt testler dahil; birim + gerçek PostgreSQL ile entegrasyon), `-race` ile. **Çekirdek paketler (metering, billing, grid, dispatch, loss) deyim kapsamı %77,0** (`scripts/domain-coverage.py`; CI %70 altında kırmızı). Her test şablon veritabanından ~50 ms'de kopyalanan kendi veritabanını kullanır.
 * **GitHub Actions**: build · gofmt · vet · golangci-lint · test + kapsam raporu (iş özeti) · Vue type-check + build · Docker imajları + `docker compose up` (soğuk) · root olmayan kullanıcı kontrolü · **`make verify`** · k6 (30 sn) · kaos (DB durdur/başlat).
 * **`make verify`**: 25/25 PASS, 5,6 sn (yerel).
 

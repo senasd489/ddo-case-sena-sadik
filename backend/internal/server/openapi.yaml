@@ -211,7 +211,7 @@ paths:
       parameters: [{ $ref: '#/components/parameters/Id' }, { name: granularity, in: query, schema: { type: string, enum: [day, 15m] } }, { $ref: '#/components/parameters/From' }, { $ref: '#/components/parameters/To' }]
       responses: { '200': { description: ok }, '403': { $ref: '#/components/responses/Error' } }
   /api/v1/admin/consumption/recompute:
-    post: { tags: [T-1 Okuma], summary: Kirli sayaç-gün kuyruğunu şimdi işle (admin), responses: { '200': { description: ok } } }
+    post: { tags: [T-1 Okuma], summary: Kirli sayaç-gün kuyruğunu şimdi işle (admin; subscriber_id verilirse yalnızca o abonenin sayaçları), parameters: [{ name: subscriber_id, in: query, schema: { type: integer } }], responses: { '200': { description: ok } } }
   /api/v1/billing/invoices/generate:
     post:
       tags: [F-4 Fatura]
