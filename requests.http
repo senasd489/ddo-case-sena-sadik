@@ -1,0 +1,341 @@
+# EnerjiHat — elle deneme koleksiyonu (VS Code "REST Client" eklentisi)
+# Demo parolası: Demo1234!   ·   @ingest = .env içindeki INGEST_TOKEN
+@api = http://localhost:8080
+@ingest = dev-ingest-token-change-me-0123456789
+
+### 0) Sağlık, metrikler, OpenAPI
+GET {{api}}/health
+
+###
+GET {{api}}/metrics
+
+###
+GET {{api}}/openapi.yaml
+
+### 1) Giriş — her rol (token'lar aşağıdaki isteklerde kullanılır)
+# @name admin
+POST {{api}}/api/v1/auth/login
+Content-Type: application/json
+
+{"email": "admin@enerjihat.local", "password": "Demo1234!"}
+
+###
+# @name abone
+POST {{api}}/api/v1/auth/login
+Content-Type: application/json
+
+{"email": "abone@enerjihat.local", "password": "Demo1234!"}
+
+###
+# @name saha
+POST {{api}}/api/v1/auth/login
+Content-Type: application/json
+
+{"email": "saha@enerjihat.local", "password": "Demo1234!"}
+
+###
+# @name fatura
+POST {{api}}/api/v1/auth/login
+Content-Type: application/json
+
+{"email": "fatura@enerjihat.local", "password": "Demo1234!"}
+
+###
+# @name operator
+POST {{api}}/api/v1/auth/login
+Content-Type: application/json
+
+{"email": "operator@enerjihat.local", "password": "Demo1234!"}
+
+###
+# @name analist
+POST {{api}}/api/v1/auth/login
+Content-Type: application/json
+
+{"email": "analist@enerjihat.local", "password": "Demo1234!"}
+
+### 1b) Yanlış parola → 401 invalid_credentials
+POST {{api}}/api/v1/auth/login
+Content-Type: application/json
+
+{"email": "admin@enerjihat.local", "password": "yanlis"}
+
+### 2) Refresh (aynı refresh_token ikinci kez → 401 refresh_reused)
+POST {{api}}/api/v1/auth/refresh
+Content-Type: application/json
+
+{"refresh_token": "{{analist.response.body.refresh_token}}"}
+
+###
+GET {{api}}/api/v1/auth/me
+Authorization: Bearer {{abone.response.body.access_token}}
+
+### 3) Yetki ihlali: abone → yönetim (403), abone → başka abone (403)
+GET {{api}}/api/v1/admin/users
+Authorization: Bearer {{abone.response.body.access_token}}
+
+###
+GET {{api}}/api/v1/subscribers/2/consumption
+Authorization: Bearer {{abone.response.body.access_token}}
+
+###
+GET {{api}}/api/v1/live
+Authorization: Bearer {{operator.response.body.access_token}}
+
+### 4) F-1 Abone + sayaç kaydı
+POST {{api}}/api/v1/subscribers
+Authorization: Bearer {{fatura.response.body.access_token}}
+Content-Type: application/json
+Idempotency-Key: elle-abone-0001
+
+{"full_name": "Elle Deneme", "address": "Liman Cd. 1, Bandırma", "category": "residential", "pole_id": 3,
+ "tariff_id": 1, "contract_kw": 7.5, "meter_serial_no": "SM-ELLE-0001", "installed_at": "2026-08-01T00:00:00+03:00"}
+
+###
+GET {{api}}/api/v1/subscribers?limit=20&category=residential
+Authorization: Bearer {{fatura.response.body.access_token}}
+
+###
+GET {{api}}/api/v1/subscribers/1
+Authorization: Bearer {{fatura.response.body.access_token}}
+
+###
+GET {{api}}/api/v1/tariffs
+Authorization: Bearer {{fatura.response.body.access_token}}
+
+### 5) F-2 Okuma alma (head-end): aynı partiyi iki kez gönderin → ikincisinde duplicates
+POST {{api}}/api/v1/readings/batch
+X-Ingest-Token: {{ingest}}
+Content-Type: application/json
+
+{"readings": [
+  {"meter_id": 1, "read_at": "2026-09-01T00:00:00+03:00", "active_index_wh": 100000, "reactive_index_varh": 0},
+  {"meter_id": 1, "read_at": "2026-09-01T00:15:00+03:00", "active_index_wh": 100120, "reactive_index_varh": 0},
+  {"meter_id": 1, "read_at": "2026-09-01T01:15:00+03:00", "active_index_wh": 100600, "reactive_index_varh": 0},
+  {"meter_id": 1, "read_at": "2026-09-01T00:07:00+03:00", "active_index_wh": 1, "reactive_index_varh": 0}
+]}
+
+### 5b) Geriye dönük düzeltme (aynı zaman, farklı değer → corrections=1)
+POST {{api}}/api/v1/readings/batch
+X-Ingest-Token: {{ingest}}
+Content-Type: application/json
+
+{"readings": [{"meter_id": 1, "read_at": "2026-09-01T00:15:00+03:00", "active_index_wh": 100150, "reactive_index_varh": 0}]}
+
+### 5c) Saha ekibi elle okuma
+POST {{api}}/api/v1/readings
+Authorization: Bearer {{saha.response.body.access_token}}
+Content-Type: application/json
+
+{"meter_id": 2, "read_at": "2026-09-01T00:00:00+03:00", "active_index_wh": 250000, "reactive_index_varh": 0}
+
+###
+POST {{api}}/api/v1/admin/consumption/recompute
+Authorization: Bearer {{admin.response.body.access_token}}
+
+###
+GET {{api}}/api/v1/meters/1/readings?from=2026-09-01&to=2026-09-02
+Authorization: Bearer {{operator.response.body.access_token}}
+
+###
+GET {{api}}/api/v1/readings/stats
+Authorization: Bearer {{operator.response.body.access_token}}
+
+### 6) F-3 Tüketim (günlük ve 15 dk; quality: measured/interpolated/corrected/reset/meter_change)
+GET {{api}}/api/v1/subscribers/1/consumption?granularity=day&from=2026-09-25&to=2026-10-26
+Authorization: Bearer {{abone.response.body.access_token}}
+
+###
+GET {{api}}/api/v1/subscribers/1/consumption?granularity=15m&from=2026-09-01&to=2026-09-02
+Authorization: Bearer {{abone.response.body.access_token}}
+
+### 7) T-1 Sayaç değişimi (saha ekibi)
+POST {{api}}/api/v1/subscribers/3/meter-change
+Authorization: Bearer {{saha.response.body.access_token}}
+Content-Type: application/json
+Idempotency-Key: elle-sayac-degisim-01
+
+{"at": "2026-10-24T12:00:00+03:00", "final_index_wh": 99999999, "new_serial_no": "SM-ELLE-NEW-3", "initial_index_wh": 0}
+
+### 8) F-4/T-2 Fatura üret (aynı istek ikinci kez → 200 created=false, aynı fatura)
+# @name gen
+POST {{api}}/api/v1/billing/invoices/generate
+Authorization: Bearer {{fatura.response.body.access_token}}
+Content-Type: application/json
+
+{"subscriber_id": 1, "period": "2026-10"}
+
+###
+GET {{api}}/api/v1/invoices/{{gen.response.body.invoice.id}}
+Authorization: Bearer {{abone.response.body.access_token}}
+
+### Önizleme (Ekim: 15 Ekim tarife değişikliği → iki parça)
+GET {{api}}/api/v1/subscribers/1/invoice-preview?period=2026-10
+Authorization: Bearer {{abone.response.body.access_token}}
+
+### Girdi değiştiyse yeniden kes
+POST {{api}}/api/v1/billing/invoices/generate
+Authorization: Bearer {{fatura.response.body.access_token}}
+Content-Type: application/json
+
+{"subscriber_id": 1, "period": "2026-10", "reissue": true}
+
+###
+POST {{api}}/api/v1/billing/runs
+Authorization: Bearer {{fatura.response.body.access_token}}
+Content-Type: application/json
+
+{"period": "2026-09", "limit": 50}
+
+###
+GET {{api}}/api/v1/invoices?limit=20&period=2026-09
+Authorization: Bearer {{fatura.response.body.access_token}}
+
+### 9) Ödeme (Idempotency-Key zorunlu; aynı anahtar → aynı cevap, tek ödeme)
+POST {{api}}/api/v1/invoices/{{gen.response.body.invoice.id}}/payments
+Authorization: Bearer {{abone.response.body.access_token}}
+Content-Type: application/json
+Idempotency-Key: elle-odeme-000001
+
+{"amount_kurus": 1000}
+
+### 10) F-5/T-3 Şebeke
+GET {{api}}/api/v1/network/tree?root=1
+Authorization: Bearer {{operator.response.body.access_token}}
+
+###
+GET {{api}}/api/v1/network/nodes/2/impact
+Authorization: Bearer {{operator.response.body.access_token}}
+
+### Döngü denemesi → 409 topology_cycle (direği kendi alt düğümünün altına)
+POST {{api}}/api/v1/network/switch
+Authorization: Bearer {{operator.response.body.access_token}}
+Content-Type: application/json
+
+{"node_id": 3, "new_parent_id": 10}
+
+### Besleyiciyi yedek trafoya aktar / geri al
+POST {{api}}/api/v1/network/switch
+Authorization: Bearer {{operator.response.body.access_token}}
+Content-Type: application/json
+
+{"node_id": 2, "new_parent_id": 29}
+
+###
+POST {{api}}/api/v1/network/nodes/2/restore-normal
+Authorization: Bearer {{operator.response.body.access_token}}
+
+### Planlı kesinti (aynı yolda çakışan ikincisi → 409 planned_overlap)
+POST {{api}}/api/v1/outages
+Authorization: Bearer {{operator.response.body.access_token}}
+Content-Type: application/json
+Idempotency-Key: elle-planli-0001
+
+{"kind": "planned", "fault_node_id": 2, "cause": "bakım", "planned_start": "2026-12-01T09:00:00+03:00", "planned_end": "2026-12-01T12:00:00+03:00"}
+
+###
+POST {{api}}/api/v1/outages
+Authorization: Bearer {{operator.response.body.access_token}}
+Content-Type: application/json
+
+{"kind": "planned", "fault_node_id": 4, "cause": "bakım", "planned_start": "2026-12-01T11:00:00+03:00", "planned_end": "2026-12-01T13:00:00+03:00"}
+
+###
+GET {{api}}/api/v1/reports/reliability?from=2026-10-01&to=2026-11-01
+Authorization: Bearer {{analist.response.body.access_token}}
+
+### 11) F-6/T-5 Kesinti bildirimleri (çağrı merkezi / head-end)
+# @name s1
+POST {{api}}/api/v1/outage-signals
+X-Ingest-Token: {{ingest}}
+Content-Type: application/json
+
+{"source": "last_gasp", "subscriber_id": 101, "external_id": "elle-lg-101"}
+
+###
+POST {{api}}/api/v1/outage-signals
+X-Ingest-Token: {{ingest}}
+Content-Type: application/json
+
+{"source": "call", "subscriber_id": 101, "external_id": "elle-call-101", "note": "elektrik yok"}
+
+###
+GET {{api}}/api/v1/outages?open=true&limit=20
+Authorization: Bearer {{operator.response.body.access_token}}
+
+###
+GET {{api}}/api/v1/outages/{{s1.response.body.outage_id}}
+Authorization: Bearer {{operator.response.body.access_token}}
+
+###
+GET {{api}}/api/v1/outages/{{s1.response.body.outage_id}}/signals
+Authorization: Bearer {{operator.response.body.access_token}}
+
+###
+POST {{api}}/api/v1/outages/{{s1.response.body.outage_id}}/transition
+Authorization: Bearer {{operator.response.body.access_token}}
+Content-Type: application/json
+
+{"to": "confirmed", "note": "elle onay"}
+
+###
+POST {{api}}/api/v1/outages/{{s1.response.body.outage_id}}/dispatch
+Authorization: Bearer {{operator.response.body.access_token}}
+
+###
+GET {{api}}/api/v1/crews
+Authorization: Bearer {{operator.response.body.access_token}}
+
+###
+GET {{api}}/api/v1/crew/me
+Authorization: Bearer {{saha.response.body.access_token}}
+
+###
+POST {{api}}/api/v1/crew/me/transition
+Authorization: Bearer {{saha.response.body.access_token}}
+Content-Type: application/json
+
+{"to": "in_progress"}
+
+###
+GET {{api}}/api/v1/me/outages
+Authorization: Bearer {{abone.response.body.access_token}}
+
+### 12) Idempotency: aynı anahtar + farklı gövde → 422 idempotency_key_mismatch
+POST {{api}}/api/v1/admin/users
+Authorization: Bearer {{admin.response.body.access_token}}
+Content-Type: application/json
+Idempotency-Key: elle-kullanici-0001
+
+{"email": "yeni.analist@enerjihat.local", "full_name": "Yeni Analist", "password": "Parola123!", "role": "analyst"}
+
+###
+GET {{api}}/api/v1/admin/audit?limit=20
+Authorization: Bearer {{admin.response.body.access_token}}
+
+### 13) F-7/T-4 Kayıp-kaçak
+POST {{api}}/api/v1/analytics/loss/run
+Authorization: Bearer {{analist.response.body.access_token}}
+Content-Type: application/json
+
+{}
+
+###
+GET {{api}}/api/v1/analytics/loss/transformers?from=2026-10-18&to=2026-10-26
+Authorization: Bearer {{analist.response.body.access_token}}
+
+###
+# @name sus
+GET {{api}}/api/v1/analytics/suspects?limit=10
+Authorization: Bearer {{analist.response.body.access_token}}
+
+###
+POST {{api}}/api/v1/analytics/suspects/{{sus.response.body.items[0].id}}/review
+Authorization: Bearer {{analist.response.body.access_token}}
+Content-Type: application/json
+
+{"status": "confirmed", "note": "saha kontrolü"}
+
+###
+GET {{api}}/api/v1/analytics/loss/evaluation
+Authorization: Bearer {{analist.response.body.access_token}}
