@@ -110,15 +110,26 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 func (s *Server) RunBackground(ctx context.Context) {
 	t := time.NewTicker(s.cfg.WorkerInterval)
 	defer t.Stop()
+	var lastPartitions time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 		}
+		// Partisyonlar önceden açılır: CREATE TABLE … PARTITION OF üst tabloda
+		// kısa bir ACCESS EXCLUSIVE kilit alır; bunu okuma alma sırasında
+		// yapmak (yük testinde görüldü) tüm sorguları saniyelerce bekletir.
+		if time.Since(lastPartitions) > time.Hour {
+			if _, err := s.pool.Exec(ctx, `SELECT ensure_reading_partitions(current_date - 120, current_date + 3)`); err != nil {
+				s.log.Error("partition maintenance", "err", err.Error())
+			} else {
+				lastPartitions = time.Now()
+			}
+		}
 		for ctx.Err() == nil {
 			wctx, cancel := context.WithTimeout(ctx, time.Minute)
-			n, err := metering.ProcessDirty(wctx, s.pool, 5000)
+			n, err := metering.ProcessDirty(wctx, s.pool, 2000)
 			cancel()
 			if err != nil {
 				if ctx.Err() == nil {

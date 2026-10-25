@@ -3,6 +3,7 @@ package metering
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -51,6 +52,7 @@ known AS (
            r.revision, 'reading'::text AS src
     FROM job j
     JOIN readings r ON r.meter_id = j.meter_id AND r.read_at BETWEEN j.d0 AND j.d1
+     AND r.read_at BETWEEN $3 AND $4
     UNION ALL
     SELECT j.meter_id, j.day, p.read_at, p.active_index_wh, p.reactive_index_varh, p.revision, 'reading'
     FROM job j
@@ -58,6 +60,7 @@ known AS (
                         FROM readings r
                         WHERE r.meter_id = j.meter_id AND r.read_at < j.d0
                           AND r.read_at >= j.d0 - interval '31 days'
+                          AND r.read_at >= $3::timestamptz - interval '31 days'
                         ORDER BY r.read_at DESC LIMIT 1) p
     UNION ALL
     SELECT j.meter_id, j.day, n.read_at, n.active_index_wh, n.reactive_index_varh, n.revision, 'reading'
@@ -66,6 +69,7 @@ known AS (
                         FROM readings r
                         WHERE r.meter_id = j.meter_id AND r.read_at > j.d1
                           AND r.read_at <= j.d1 + interval '31 days'
+                          AND r.read_at <= $4::timestamptz + interval '31 days'
                         ORDER BY r.read_at LIMIT 1) n
     UNION ALL
     SELECT j.meter_id, j.day, j.installed_at, j.initial_index_wh, j.initial_reactive_varh, 0, 'install'
@@ -129,7 +133,8 @@ WHERE sl.slot_start >= j.d0 AND sl.slot_start < j.d1
 const deleteSlotsSQL = `
 DELETE FROM consumption_15m c
 USING unnest($1::bigint[], $2::date[]) AS j(meter_id, day)
-WHERE c.meter_id = j.meter_id
+WHERE c.slot_start >= $3 AND c.slot_start < $4
+  AND c.meter_id = j.meter_id
   AND c.slot_start >= (j.day::timestamp AT TIME ZONE 'Europe/Istanbul')
   AND c.slot_start <  ((j.day + 1)::timestamp AT TIME ZONE 'Europe/Istanbul')`
 
@@ -148,6 +153,7 @@ SELECT c.meter_id, max(c.subscriber_id), j.day,
        count(*) FILTER (WHERE c.quality = 'interpolated')
 FROM unnest($1::bigint[], $2::date[]) AS j(meter_id, day)
 JOIN consumption_15m c ON c.meter_id = j.meter_id
+ AND c.slot_start >= $3 AND c.slot_start < $4
  AND c.slot_start >= (j.day::timestamp AT TIME ZONE 'Europe/Istanbul')
  AND c.slot_start <  ((j.day + 1)::timestamp AT TIME ZONE 'Europe/Istanbul')
 CROSS JOIN LATERAL (SELECT extract(hour FROM c.slot_start AT TIME ZONE 'Europe/Istanbul')::int AS h) hh
@@ -174,50 +180,103 @@ func Recompute(ctx context.Context, tx pgx.Tx, days []MeterDay) error {
 	if _, err := tx.Exec(ctx, `SELECT ensure_reading_partitions($1::date - 1, $2::date)`, minD, maxD); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, deleteSlotsSQL, ids, ds); err != nil {
+	// Sabit sınırlar planlama anında partisyon budamasını sağlar.
+	lo, hi := minD.Add(-24*time.Hour), maxD.Add(48*time.Hour)
+	if _, err := tx.Exec(ctx, deleteSlotsSQL, ids, ds, lo, hi); err != nil {
 		return fmt.Errorf("delete slots: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO consumption_15m (meter_id, subscriber_id, slot_start, active_wh, reactive_varh, quality) `+consumptionSQL, ids, ds); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO consumption_15m (meter_id, subscriber_id, slot_start, active_wh, reactive_varh, quality) `+consumptionSQL, ids, ds, lo, hi); err != nil {
 		return fmt.Errorf("compute slots: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM consumption_daily d USING unnest($1::bigint[], $2::date[]) AS j(meter_id, day)
 		WHERE d.meter_id = j.meter_id AND d.day = j.day`, ids, ds); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, dailySQL, ids, ds); err != nil {
+	if _, err := tx.Exec(ctx, dailySQL, ids, ds, lo, hi); err != nil {
 		return fmt.Errorf("daily rollup: %w", err)
 	}
 	meterDaysComputed.Add(float64(len(days)))
 	return nil
 }
 
-// ProcessDirty takes up to limit queued meter-days with FOR UPDATE SKIP
-// LOCKED (so several workers never process the same meter-day) and
-// recomputes them in one transaction. It returns how many were processed.
+// ProcessDirty claims up to limit queued meter-days and recomputes them.
+// It uses three short transactions so ingestion never waits for a long
+// recomputation:
+//  1. claim: UPDATE … SET claimed_at = now() on rows picked with FOR UPDATE
+//     SKIP LOCKED (concurrent workers take disjoint rows);
+//  2. compute: Recompute under a per-meter advisory lock;
+//  3. finish: delete the rows unless ingestion re-marked them meanwhile
+//     (marked_at > claimed_at) — those are picked up again.
+//
+// Claims older than five minutes (crashed worker) are taken over.
 func ProcessDirty(ctx context.Context, pool *pgxpool.Pool, limit int) (int, error) {
-	var n int
-	err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			DELETE FROM consumption_dirty d
-			USING (SELECT meter_id, day FROM consumption_dirty
-			       ORDER BY day, meter_id LIMIT $1 FOR UPDATE SKIP LOCKED) p
-			WHERE d.meter_id = p.meter_id AND d.day = p.day
-			RETURNING d.meter_id, d.day`, limit)
-		if err != nil {
-			return err
+	rows, err := pool.Query(ctx, `
+		UPDATE consumption_dirty d SET claimed_at = now()
+		FROM (SELECT meter_id, day FROM consumption_dirty
+		      WHERE claimed_at IS NULL OR marked_at > claimed_at OR claimed_at < now() - interval '5 minutes'
+		      ORDER BY day, meter_id LIMIT $1 FOR UPDATE SKIP LOCKED) p
+		WHERE d.meter_id = p.meter_id AND d.day = p.day
+		RETURNING d.meter_id, d.day, d.claimed_at`, limit)
+	if err != nil {
+		return 0, err
+	}
+	var days []MeterDay
+	var claimed []time.Time
+	for rows.Next() {
+		var md MeterDay
+		var c time.Time
+		if err := rows.Scan(&md.MeterID, &md.Day, &c); err != nil {
+			rows.Close()
+			return 0, err
 		}
-		days, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (MeterDay, error) {
-			var md MeterDay
-			err := r.Scan(&md.MeterID, &md.Day)
-			return md, err
-		})
-		if err != nil {
-			return err
+		days = append(days, md)
+		claimed = append(claimed, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(days) == 0 {
+		return 0, err
+	}
+	sort.Slice(days, func(i, j int) bool { return days[i].MeterID < days[j].MeterID })
+	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		// Aynı sayacı iki işçi aynı anda hesaplamasın (yeniden işaretlenen satırlar).
+		prev := int64(-1)
+		for _, d := range days {
+			if d.MeterID != prev {
+				if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(5151, $1::int)`, d.MeterID); err != nil {
+					return err
+				}
+				prev = d.MeterID
+			}
 		}
-		n = len(days)
 		return Recompute(ctx, tx, days)
 	})
-	return n, err
+	if err != nil {
+		// Talep geri bırakılır; bir sonraki turda tekrar denenir.
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `UPDATE consumption_dirty SET claimed_at = NULL
+			WHERE (meter_id, day) IN (SELECT * FROM unnest($1::bigint[], $2::date[]))`, ids(days), dates(days))
+		return 0, err
+	}
+	_, err = pool.Exec(ctx, `DELETE FROM consumption_dirty d
+		USING unnest($1::bigint[], $2::date[]) AS j(meter_id, day)
+		WHERE d.meter_id = j.meter_id AND d.day = j.day AND d.marked_at <= d.claimed_at`, ids(days), dates(days))
+	_ = claimed
+	return len(days), err
+}
+
+func ids(ds []MeterDay) []int64 {
+	out := make([]int64, len(ds))
+	for i, d := range ds {
+		out[i] = d.MeterID
+	}
+	return out
+}
+
+func dates(ds []MeterDay) []time.Time {
+	out := make([]time.Time, len(ds))
+	for i, d := range ds {
+		out[i] = d.Day
+	}
+	return out
 }
 
 // DrainDirty processes the queue until it is empty (used by tests, verify and

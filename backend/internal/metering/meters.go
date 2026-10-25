@@ -89,7 +89,7 @@ func ReplaceMeter(ctx context.Context, tx pgx.Tx, c MeterChange) (*Meter, error)
 		SELECT id, d::date FROM unnest(ARRAY[$1::bigint, $2::bigint]) id,
 		     generate_series((($3::timestamptz - interval '15 minutes') AT TIME ZONE 'Europe/Istanbul')::date,
 		                     ($3::timestamptz AT TIME ZONE 'Europe/Istanbul')::date, interval '1 day') d
-		ON CONFLICT (meter_id, day) DO UPDATE SET marked_at = now()`, old.ID, m.ID, c.At); err != nil {
+		ON CONFLICT (meter_id, day) DO UPDATE SET marked_at = clock_timestamp()`, old.ID, m.ID, c.At); err != nil {
 		return nil, err
 	}
 	err = audit.Record(ctx, tx, audit.Entry{Action: "meter.replace", Entity: "meter", EntityID: strconv.FormatInt(m.ID, 10),

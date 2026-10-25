@@ -183,11 +183,17 @@ func ingestOnce(ctx context.Context, pool *pgxpool.Pool, source string, rows []R
 				Reason: fmt.Sprintf("%d okuma bilinmeyen sayaç veya sayacın kurulu olmadığı zaman için", stagedDistinct-accepted)})
 		}
 
+		// İstatistik ve sabit zaman aralığı: planlayıcı iç içe indeks taramasını
+		// seçsin ve yalnızca ilgili günlerin partisyonlarına baksın (budama).
+		if _, err := tx.Exec(ctx, `ANALYZE s`); err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO reading_corrections (meter_id, read_at, old_index_wh, new_index_wh)
 			SELECT s.meter_id, s.read_at, r.active_index_wh, s.a
 			FROM s JOIN readings r ON r.meter_id = s.meter_id AND r.read_at = s.read_at
-			WHERE (r.active_index_wh, r.reactive_index_varh) IS DISTINCT FROM (s.a, s.q)`)
+			WHERE r.read_at BETWEEN $1 AND $2
+			  AND (r.active_index_wh, r.reactive_index_varh) IS DISTINCT FROM (s.a, s.q)`, minT, maxT)
 		if err != nil {
 			return err
 		}
@@ -249,6 +255,7 @@ SELECT meter_id, d FROM (
     FROM (SELECT meter_id, min(read_at) AS first_new FROM changed GROUP BY meter_id) g
     CROSS JOIN LATERAL (SELECT r.read_at FROM readings r
                         WHERE r.meter_id = g.meter_id AND r.read_at < g.first_new
+                          AND r.read_at > g.first_new - interval '31 days' -- partisyon budaması
                         ORDER BY r.read_at DESC LIMIT 1) p
     CROSS JOIN LATERAL generate_series((p.read_at AT TIME ZONE 'Europe/Istanbul')::date,
                                        (g.first_new AT TIME ZONE 'Europe/Istanbul')::date, interval '1 day') gs
@@ -258,6 +265,7 @@ SELECT meter_id, d FROM (
     FROM (SELECT meter_id, max(read_at) AS last_new FROM changed GROUP BY meter_id) g
     CROSS JOIN LATERAL (SELECT r.read_at FROM readings r
                         WHERE r.meter_id = g.meter_id AND r.read_at > g.last_new
+                          AND r.read_at < g.last_new + interval '31 days'
                         ORDER BY r.read_at LIMIT 1) n
     CROSS JOIN LATERAL generate_series((g.last_new AT TIME ZONE 'Europe/Istanbul')::date,
                                        (n.read_at AT TIME ZONE 'Europe/Istanbul')::date, interval '1 day') gs
@@ -266,4 +274,4 @@ SELECT meter_id, d FROM (
 GROUP BY meter_id, d
 -- Sabit sıra: eşzamanlı partiler aynı satırları aynı sırada kilitler (deadlock olmaz).
 ORDER BY meter_id, d
-ON CONFLICT (meter_id, day) DO NOTHING`
+ON CONFLICT (meter_id, day) DO UPDATE SET marked_at = clock_timestamp()`
