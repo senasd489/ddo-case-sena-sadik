@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/auth"
+	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/billing"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/config"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/customers"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/httpx"
@@ -60,6 +61,7 @@ func (s *Server) Router() http.Handler {
 				users.New(s.pool).Mount(r)
 				customers.New(s.pool).Mount(r)
 				meter.Mount(r)
+				billing.NewHandlers(s.pool).Mount(r)
 			})
 		})
 	})
