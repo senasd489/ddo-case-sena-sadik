@@ -1,6 +1,7 @@
 package loss
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -86,7 +87,12 @@ func (h *Handlers) run(w http.ResponseWriter, r *http.Request) error {
 	if req.Filters != nil {
 		o.Filters = *req.Filters
 	}
-	sum, err := Run(r.Context(), h.pool, o)
+	// Analiz, genel 30 sn'lik istek süresinden uzun sürebilen bir toplu iştir
+	// (200 bin abonede ~1 dk); istemci bağlantıyı kapatsa bile tamamlanır,
+	// kendi üst sınırı 5 dakikadır.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Minute)
+	defer cancel()
+	sum, err := Run(ctx, h.pool, o)
 	if err != nil {
 		return err
 	}
