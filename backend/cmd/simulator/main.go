@@ -185,7 +185,13 @@ func main() {
 	}); err != nil {
 		return
 	}
-	start := time.Now().Add(-cfg.Backfill).Truncate(15 * time.Minute)
+	// Akış, seed'in yazdığı geçmişin bittiği yerden (bugünden 2 gün önceki yerel
+	// gece yarısı) başlar; böylece geçmiş ile canlı veri arasında boşluk kalmaz.
+	// SIM_BACKFILL verilmişse o kadar geriden başlanır.
+	start := cfg.Anchor.AddDate(0, 0, -2)
+	if os.Getenv("SIM_BACKFILL") != "" {
+		start = time.Now().Add(-cfg.Backfill).Truncate(15 * time.Minute)
+	}
 	st := sim.NewState(sim.Generator{Seed: cfg.Seed}, meters, start)
 	log.Info("meters loaded", "count", len(meters), "stream_start", start.Format(time.RFC3339))
 
