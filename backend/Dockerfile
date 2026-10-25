@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Bağımlılıklar vendor/ altında olduğu için derleme ağ erişimi gerektirmez.
 FROM golang:1.25-alpine AS build
 WORKDIR /src
