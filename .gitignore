@@ -1,0 +1,10 @@
+.env
+node_modules/
+frontend/dist/
+backend/coverage.*
+*.test
+/tmp/
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

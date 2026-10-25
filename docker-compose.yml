@@ -1,0 +1,70 @@
+name: enerjihat
+
+x-db-env: &db-env
+  DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    command: ["postgres", "-c", "shared_buffers=256MB", "-c", "max_connections=200"]
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    # host'a port açılmaz: yalnızca compose ağı
+
+  migrate:
+    build: { context: ./backend, target: api }
+    image: enerjihat-api:local
+    command: ["seed"]
+    environment:
+      <<: *db-env
+      JWT_SECRET: ${JWT_SECRET}
+      SIM_SEED: ${SIM_SEED:-42}
+    depends_on:
+      db: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    image: enerjihat-api:local
+    pull_policy: never
+    environment:
+      <<: *db-env
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-30s}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports: ["8080:8080"]
+    depends_on:
+      db: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  simulator:
+    build: { context: ./backend, target: simulator }
+    environment:
+      API_URL: http://api:8080
+      SIM_SEED: ${SIM_SEED:-42}
+      SIM_METERS: ${SIM_METERS:-5000}
+      SIM_SPEED: ${SIM_SPEED:-60}
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+  frontend:
+    build: { context: ./frontend }
+    ports: ["3000:3000"]
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+volumes:
+  dbdata:

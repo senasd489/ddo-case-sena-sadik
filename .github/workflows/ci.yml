@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (build · lint · test · coverage)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: enerjihat
+          POSTGRES_PASSWORD: enerjihat
+          POSTGRES_DB: enerjihat_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U enerjihat" --health-interval 3s --health-timeout 3s --health-retries 30
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      GOFLAGS: -mod=vendor
+      TEST_DATABASE_URL: postgres://enerjihat:enerjihat@localhost:5432/enerjihat_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+      - name: Build
+        run: go build ./...
+      - name: gofmt
+        run: test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+      - name: go vet
+        run: go vet ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.5.0
+          working-directory: backend
+          args: --timeout=5m
+      - name: Test (race + coverage)
+        run: |
+          go test -race -count=1 -coverpkg=./internal/... -coverprofile=coverage.out ./... | tee test.log
+          echo "## Test kapsamı" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=coverage.out | tail -25 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=coverage.out | tail -1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: backend/coverage.out
+
+  frontend:
+    name: Frontend (type-check · build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  docker:
+    name: Docker images + compose smoke
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build images & start stack
+        run: |
+          cp .env.example .env
+          time docker compose up --build -d
+          time ./scripts/wait-healthy.sh 300
+          docker compose ps -a
+      - name: Health
+        run: curl -fsS http://localhost:8080/health && curl -fsS http://localhost:3000/ >/dev/null
+      - name: Non-root check
+        run: |
+          for s in api frontend; do
+            uid=$(docker compose exec -T $s id -u 2>/dev/null || docker inspect --format '{{.Config.User}}' $(docker compose ps -q $s))
+            echo "$s user: $uid"; test "$uid" != "0" && test "$uid" != "root"
+          done
+      - name: Image sizes
+        run: docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep enerjihat
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
