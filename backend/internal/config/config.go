@@ -20,6 +20,7 @@ type Config struct {
 	CORSOrigin      string
 	IngestToken     string
 	WorkerInterval  time.Duration
+	AutoDispatch    bool
 }
 
 func Load() (Config, error) {
@@ -35,6 +36,7 @@ func Load() (Config, error) {
 		CORSOrigin:      env("CORS_ORIGIN", "http://localhost:3000"),
 		IngestToken:     env("INGEST_TOKEN", ""),
 		WorkerInterval:  envDur("WORKER_INTERVAL", 2*time.Second),
+		AutoDispatch:    env("AUTO_DISPATCH", "true") == "true",
 	}
 	if c.DatabaseURL == "" {
 		return c, fmt.Errorf("DATABASE_URL is required")

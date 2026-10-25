@@ -15,6 +15,7 @@ import (
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/billing"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/config"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/customers"
+	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/dispatch"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/grid"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/httpx"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/idempotency"
@@ -52,6 +53,8 @@ func (s *Server) Router() http.Handler {
 			auth.NewHandlers(s.auth).Mount(r) // herkese açık: login/refresh/logout
 			meter := metering.NewHandlers(s.pool, s.auth.Signer(), s.cfg.IngestToken)
 			meter.MountIngest(r) // X-Ingest-Token veya saha/yönetici JWT
+			disp := dispatch.NewHandlers(s.pool, s.auth.Signer(), s.cfg.IngestToken)
+			disp.MountIngest(r)
 
 			// Buradan sonrası kimlik doğrulama ister; her route kendi rol listesini belirtir.
 			r.Group(func(r chi.Router) {
@@ -64,6 +67,7 @@ func (s *Server) Router() http.Handler {
 				meter.Mount(r)
 				billing.NewHandlers(s.pool).Mount(r)
 				grid.NewHandlers(s.pool).Mount(r)
+				disp.Mount(r)
 			})
 		})
 	})
@@ -119,6 +123,11 @@ func (s *Server) RunBackground(ctx context.Context) {
 			}
 			if n == 0 {
 				break
+			}
+		}
+		if s.cfg.AutoDispatch {
+			if _, err := dispatch.AutoDispatch(ctx, s.pool, 20); err != nil && ctx.Err() == nil {
+				s.log.Error("auto dispatch", "err", err.Error())
 			}
 		}
 	}

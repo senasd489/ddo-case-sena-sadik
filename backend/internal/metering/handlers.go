@@ -1,7 +1,6 @@
 package metering
 
 import (
-	"crypto/subtle"
 	"errors"
 	"net/http"
 	"strconv"
@@ -47,17 +46,7 @@ func (h *Handlers) Mount(r chi.Router) {
 }
 
 func (h *Handlers) ingestAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if tok := r.Header.Get("X-Ingest-Token"); tok != "" {
-			if h.ingestToken == "" || subtle.ConstantTimeCompare([]byte(tok), []byte(h.ingestToken)) != 1 {
-				httpx.WriteError(w, r, httpx.NewError(http.StatusUnauthorized, "invalid_ingest_token", "geçersiz ingest token"))
-				return
-			}
-			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), auth.System)))
-			return
-		}
-		auth.Authenticate(h.signer)(auth.Require(auth.RoleFieldCrew, auth.RoleAdmin)(next)).ServeHTTP(w, r)
-	})
+	return auth.IngestOrRoles(h.signer, h.ingestToken, auth.RoleFieldCrew, auth.RoleAdmin)(next)
 }
 
 type batchReq struct {
