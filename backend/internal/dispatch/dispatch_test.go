@@ -263,7 +263,10 @@ func TestCrewLifecycleAndRelease(t *testing.T) {
 	}
 	run := func(fn func(pgx.Tx) error) error { return pgx.BeginFunc(ctx, pool, fn) }
 	// Başka ekip bu işi yürütemez.
-	if err := run(func(tx pgx.Tx) error { _, err := CrewTransitionTx(ctx, tx, a.CrewID+100, "in_progress", 0, ""); return err }); !errors.Is(err, ErrNoAssignment) {
+	if err := run(func(tx pgx.Tx) error {
+		_, err := CrewTransitionTx(ctx, tx, a.CrewID+100, "in_progress", 0, "")
+		return err
+	}); !errors.Is(err, ErrNoAssignment) {
 		t.Fatalf("other crew: %v", err)
 	}
 	if err := run(func(tx pgx.Tx) error { _, err := CrewTransitionTx(ctx, tx, a.CrewID, "cancelled", 0, ""); return err }); !errors.Is(err, grid.ErrBadTransition) {

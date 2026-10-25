@@ -19,6 +19,7 @@ import (
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/grid"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/httpx"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/idempotency"
+	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/loss"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/metering"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/metrics"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/seed"
@@ -68,6 +69,7 @@ func (s *Server) Router() http.Handler {
 				billing.NewHandlers(s.pool).Mount(r)
 				grid.NewHandlers(s.pool).Mount(r)
 				disp.Mount(r)
+				loss.NewHandlers(s.pool).Mount(r)
 			})
 		})
 	})

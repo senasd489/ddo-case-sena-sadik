@@ -1,7 +1,7 @@
 # EnerjiHat — kısayol komutları
 COMPOSE ?= docker compose
 
-.PHONY: up down logs ps test cover lint verify load chaos reset-demo fmt bench-t1
+.PHONY: up down logs ps test cover lint verify load chaos reset-demo fmt bench-t1 bench-t4
 
 up:            ## Tüm sistemi derleyip ayağa kaldırır
 	@test -f .env || cp .env.example .env
@@ -36,3 +36,6 @@ reset-demo:    ## Verileri ilk seed haline döndürür (şema silinip yeniden ku
 
 bench-t1:      ## T-1 kanıtı: ≈10 milyon okumayı ayrı bir bench veritabanına yazar ve ölçer
 	$(COMPOSE) run --rm migrate bench-t1 $(METERS)
+
+bench-t4:      ## T-4 kanıtı: yerleştirilmiş kaçaklarla precision/recall, filtreli vs filtresiz
+	$(COMPOSE) run --rm migrate bench-t4 $(SUBS)

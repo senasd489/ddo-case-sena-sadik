@@ -1,0 +1,10 @@
+# make bench-t4 çıktısı — 2026-10-25T01:54Z
+T-4 değerlendirmesi — 5000 abone, 28 gün; yerleştirilen: 5 kaçak (ani düşüş), 3 gece anomalisi;
+tuzaklar: 3 kesinti yaşayan, 2 eksik verili abone, 482 yüksek değişkenlikli normal abone, TR-0003'te 1 eksik veri günü
+
+| Mod | İşaretlenen | Doğru | Yanlış alarm | Kaçırılan | Precision | Recall | Yanlış alarm oranı | YA nedeni |
+|---|---|---|---|---|---|---|---|---|
+| Filtresiz (ortalama/std, tek gün) | 12 | 8 | 4 | 0 | 0.667 | 1.000 | 0.0008 | map[eksik_veri:1 kesinti:3] |
+| Filtreli (medyan/MAD + kalite + bağlam + kalıcılık) | 8 | 8 | 0 | 0 | 1.000 | 1.000 | 0.0000 | map[] |
+
+Örnek gerekçe (en yüksek skor): Tüketimin %78'i gece (22-06); aynı kategorideki 192 abonenin medyanı %30 (z = 13.1 ≥ 3.5). TR-0002 trafosunda kalıcı fazla kayıp yok; tek başına zayıf kanıt.

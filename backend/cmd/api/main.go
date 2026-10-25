@@ -4,6 +4,7 @@
 //	api migrate    apply database migrations and exit
 //	api seed       apply migrations, load demo seed data and exit
 //	api bench-t1 [n]  T-1 ölçümü: n sayaç × 1 gün okuma (varsayılan ≈10 milyon)
+//	api bench-t4 [n]  T-4 ölçümü: yerleştirilmiş anomalilerle precision/recall, filtreli vs filtresiz
 //	api reset      drop everything, re-migrate and re-seed (make reset-demo)
 //	api healthcheck  probe GET /health (used by the Docker HEALTHCHECK)
 package main
@@ -77,6 +78,12 @@ func run(log *slog.Logger) error {
 			meters, _ = strconv.Atoi(os.Args[2])
 		}
 		return bench.RunT1(ctx, cfg.DatabaseURL, bench.T1Options{Meters: meters, Keep: os.Getenv("BENCH_KEEP") == "1"}, os.Stdout)
+	case "bench-t4":
+		n := 0
+		if len(os.Args) > 2 {
+			n, _ = strconv.Atoi(os.Args[2])
+		}
+		return bench.RunT4(ctx, cfg.DatabaseURL, n, os.Stdout)
 	case "", "serve":
 	default:
 		return fmt.Errorf("unknown command %q", cmd)
