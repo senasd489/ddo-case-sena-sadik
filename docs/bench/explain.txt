@@ -1,0 +1,121 @@
+# make explain çıktısı — 5000 abone, ~1 milyon 15 dk satırı, 2026-10-25T02:48Z
+Timing is off.
+=== 1) Abone portalı: 1 günlük 15 dk tüketim — consumption_15m_sub_idx (subscriber_id, slot_start) ===
+--- dizinli
+                                                                              QUERY PLAN                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Append (actual time=0.070..0.127 rows=96 loops=1)
+   Buffers: shared hit=7 read=5
+   Subplans Removed: 122
+   ->  Index Scan using consumption_15m_20261023_subscriber_id_slot_start_idx on consumption_15m_20261023 consumption_15m_1 (actual time=0.069..0.082 rows=84 loops=1)
+         Index Cond: ((subscriber_id = 1) AND (slot_start >= (now() - '2 days'::interval)) AND (slot_start < (now() - '1 day'::interval)))
+         Buffers: shared hit=5 read=3
+   ->  Index Scan using consumption_15m_20261024_subscriber_id_slot_start_idx on consumption_15m_20261024 consumption_15m_2 (actual time=0.033..0.035 rows=12 loops=1)
+         Index Cond: ((subscriber_id = 1) AND (slot_start >= (now() - '2 days'::interval)) AND (slot_start < (now() - '1 day'::interval)))
+         Buffers: shared hit=2 read=2
+ Planning:
+   Buffers: shared hit=8338 read=197
+ Planning Time: 18.654 ms
+ Execution Time: 0.201 ms
+(13 rows)
+
+BEGIN
+DROP INDEX
+--- dizinsiz
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Gather (actual time=7.959..105.931 rows=96 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=11207 read=33090
+   ->  Parallel Append (actual time=26.227..71.442 rows=32 loops=3)
+         Buffers: shared hit=11207 read=33090
+         Subplans Removed: 122
+         ->  Parallel Seq Scan on consumption_15m_20261024 consumption_15m_2 (actual time=30.526..43.787 rows=4 loops=3)
+               Filter: ((subscriber_id = 1) AND (slot_start >= (now() - '2 days'::interval)) AND (slot_start < (now() - '1 day'::interval)))
+               Rows Removed by Filter: 160796
+               Buffers: shared hit=806 read=28715
+         ->  Parallel Seq Scan on consumption_15m_20261023 consumption_15m_1 (actual time=11.595..41.472 rows=42 loops=2)
+               Filter: ((subscriber_id = 1) AND (slot_start >= (now() - '2 days'::interval)) AND (slot_start < (now() - '1 day'::interval)))
+               Rows Removed by Filter: 221132
+               Buffers: shared hit=10401 read=4375
+ Planning:
+   Buffers: shared hit=2325
+ Planning Time: 6.891 ms
+ Execution Time: 123.361 ms
+(19 rows)
+
+ROLLBACK
+=== 2) Fatura girdisi: abonenin 1 aylık günlük tüketimi — consumption_daily_sub_idx (subscriber_id, day) ===
+--- dizinli
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual time=0.058..0.071 rows=30 loops=1)
+   Group Key: day
+   Buffers: shared hit=9
+   ->  Sort (actual time=0.048..0.050 rows=30 loops=1)
+         Sort Key: day
+         Sort Method: quicksort  Memory: 26kB
+         Buffers: shared hit=9
+         ->  Bitmap Heap Scan on consumption_daily (actual time=0.024..0.032 rows=30 loops=1)
+               Recheck Cond: ((subscriber_id = 777) AND (day >= (CURRENT_DATE - 30)) AND (day < CURRENT_DATE))
+               Heap Blocks: exact=3
+               Buffers: shared hit=6
+               ->  Bitmap Index Scan on consumption_daily_sub_idx (actual time=0.015..0.015 rows=30 loops=1)
+                     Index Cond: ((subscriber_id = 777) AND (day >= (CURRENT_DATE - 30)) AND (day < CURRENT_DATE))
+                     Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=101
+ Planning Time: 0.351 ms
+ Execution Time: 0.113 ms
+(18 rows)
+
+BEGIN
+DROP INDEX
+--- dizinsiz
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Finalize GroupAggregate (actual time=30.159..32.239 rows=30 loops=1)
+   Group Key: day
+   Buffers: shared hit=3894
+   ->  Gather Merge (actual time=30.142..32.191 rows=30 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=3894
+         ->  Partial GroupAggregate (actual time=6.458..6.465 rows=10 loops=3)
+               Group Key: day
+               Buffers: shared hit=3894
+               ->  Sort (actual time=6.454..6.455 rows=10 loops=3)
+                     Sort Key: day
+                     Sort Method: quicksort  Memory: 26kB
+                     Buffers: shared hit=3894
+                     Worker 0:  Sort Method: quicksort  Memory: 25kB
+                     Worker 1:  Sort Method: quicksort  Memory: 25kB
+                     ->  Parallel Seq Scan on consumption_daily (actual time=0.577..6.408 rows=10 loops=3)
+                           Filter: ((subscriber_id = 777) AND (day < CURRENT_DATE) AND (day >= (CURRENT_DATE - 30)))
+                           Rows Removed by Filter: 74768
+                           Buffers: shared hit=3816
+ Planning:
+   Buffers: shared hit=5
+ Planning Time: 0.096 ms
+ Execution Time: 32.266 ms
+(24 rows)
+
+ROLLBACK
+=== 3) Açık kesintiler — outages_open_idx (kısmi dizin) ===
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Sort (actual time=0.020..0.021 rows=2 loops=1)
+   Sort Key: started_at
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=5
+   ->  Seq Scan on outages (actual time=0.008..0.013 rows=2 loops=1)
+         Filter: ((status <> ALL ('{resolved,cancelled}'::text[])) AND (feeder_id = 2))
+         Rows Removed by Filter: 30
+         Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=174
+ Planning Time: 0.382 ms
+ Execution Time: 0.030 ms
+(12 rows)
+
