@@ -1,0 +1,40 @@
+# make bench-t1 çıktısı — 2 vCPU / 7 GB geliştirme makinesi, PostgreSQL 16 (yerel, fsync=off), 2026-10-25T01:17Z
+T-1 benchmark — 104200 sayaç × 96 slot (+1 sınır okuması) ≈ 10.1 M okuma, 4 işçi, parti 20000
+  şema + seed: 2.619s
+  okuma alma: 10086743 gönderildi, 10056662 yazıldı, 30081 tekrar, 0 red — 1m37.91s (103020 okuma/sn)
+  readings partisyon sayısı: 4
+  tüketim hesabı: 311567 sayaç-gün, 10002160 slot (99157 interpolasyon) — 1m40.477s (99547 slot/sn)
+
+  EXPLAIN ANALYZE — Bir sayacın günlük ham okumaları (partition pruning + PK)
+    Append (actual time=0.042..0.193 rows=96 loops=1)
+      Buffers: shared hit=4 read=34
+      ->  Bitmap Heap Scan on readings_20260531 readings_1 (actual time=0.042..0.090 rows=12 loops=1)
+            Recheck Cond: ((meter_id = 777) AND (read_at >= '2026-06-01 00:00:00+03'::timestamp with time zone) AND (read_at < '2026-06-02 00:00:00+03'::timestamp with time zone))
+            Heap Blocks: exact=12
+            Buffers: shared hit=3 read=15
+            ->  Bitmap Index Scan on readings_20260531_pkey (actual time=0.032..0.032 rows=12 loops=1)
+                  Index Cond: ((meter_id = 777) AND (read_at >= '2026-06-01 00:00:00+03'::timestamp with time zone) AND (read_at < '2026-06-02 00:00:00+03'::timestamp with time zone))
+                  Buffers: shared hit=3 read=3
+      ->  Index Scan using readings_20260601_pkey on readings_20260601 readings_2 (actual time=0.018..0.095 rows=84 loops=1)
+            Index Cond: ((meter_id = 777) AND (read_at >= '2026-06-01 00:00:00+03'::timestamp with time zone) AND (read_at < '2026-06-02 00:00:00+03'::timestamp with time zone))
+            Buffers: shared hit=1 read=19
+    Planning:
+      Buffers: shared hit=88 read=2
+    Planning Time: 0.413 ms
+    Execution Time: 0.214 ms
+
+  EXPLAIN ANALYZE — Abonenin 15 dk tüketimi (consumption_15m_sub_idx)
+    Append (actual time=0.016..0.051 rows=96 loops=1)
+      Buffers: shared hit=1 read=8
+      ->  Index Scan using consumption_15m_20260531_subscriber_id_slot_start_idx on consumption_15m_20260531 consumption_15m_1 (actual time=0.015..0.017 rows=12 loops=1)
+            Index Cond: ((subscriber_id = 777) AND (slot_start >= '2026-06-01 00:00:00+03'::timestamp with time zone) AND (slot_start < '2026-06-02 00:00:00+03'::timestamp with time zone))
+            Buffers: shared hit=1 read=3
+      ->  Index Scan using consumption_15m_20260601_subscriber_id_slot_start_idx on consumption_15m_20260601 consumption_15m_2 (actual time=0.017..0.027 rows=84 loops=1)
+            Index Cond: ((subscriber_id = 777) AND (slot_start >= '2026-06-01 00:00:00+03'::timestamp with time zone) AND (slot_start < '2026-06-02 00:00:00+03'::timestamp with time zone))
+            Buffers: shared read=5
+    Planning:
+      Buffers: shared hit=144 read=2
+    Planning Time: 0.331 ms
+    Execution Time: 0.065 ms
+
+  toplam süre: 3m22.901s
