@@ -27,6 +27,40 @@ func (h *Handlers) Mount(r chi.Router) {
 	r.With(analysts).Get("/analytics/suspects", httpx.H(h.suspects))
 	r.With(analysts).Get("/analytics/suspects/{id}", httpx.H(h.suspect))
 	r.With(analysts).Post("/analytics/suspects/{id}/review", httpx.H(h.review))
+	r.With(analysts).Get("/analytics/loss/evaluation", httpx.H(h.evaluation))
+}
+
+// evaluation compares the current flags with the simulator's ground truth
+// (sim_profiles). It exists only to measure detection quality on demo data;
+// the detection itself never reads sim_profiles.
+func (h *Handlers) evaluation(w http.ResponseWriter, r *http.Request) error {
+	var out struct {
+		Positives      int     `json:"positives"`
+		Flagged        int     `json:"flagged_subscribers"`
+		TruePositives  int     `json:"true_positives"`
+		FalsePositives int     `json:"false_positives"`
+		Precision      float64 `json:"precision"`
+		Recall         float64 `json:"recall"`
+	}
+	err := h.pool.QueryRow(r.Context(), `
+		WITH truth AS (SELECT subscriber_id FROM sim_profiles WHERE profile IN ('thief','night')),
+		     flagged AS (SELECT DISTINCT subscriber_id FROM suspicion_flags WHERE status <> 'dismissed'
+		                 AND window_start = (SELECT max(window_start) FROM suspicion_flags))
+		SELECT (SELECT count(*) FROM truth), (SELECT count(*) FROM flagged),
+		       (SELECT count(*) FROM flagged f JOIN truth t USING (subscriber_id)),
+		       (SELECT count(*) FROM flagged f WHERE f.subscriber_id NOT IN (SELECT subscriber_id FROM truth))`).
+		Scan(&out.Positives, &out.Flagged, &out.TruePositives, &out.FalsePositives)
+	if err != nil {
+		return err
+	}
+	if out.Flagged > 0 {
+		out.Precision = float64(out.TruePositives) / float64(out.Flagged)
+	}
+	if out.Positives > 0 {
+		out.Recall = float64(out.TruePositives) / float64(out.Positives)
+	}
+	httpx.JSON(w, http.StatusOK, out)
+	return nil
 }
 
 type runReq struct {

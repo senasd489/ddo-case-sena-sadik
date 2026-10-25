@@ -71,5 +71,17 @@ services:
       api: { condition: service_healthy }
     restart: unless-stopped
 
+  # make verify → docker compose --profile verify run --rm verify
+  verify:
+    build: { context: ./backend, target: verify }
+    profiles: ["verify"]
+    environment:
+      API_URL: http://api:8080
+      WEB_URL: http://frontend:3000
+      INGEST_TOKEN: ${INGEST_TOKEN}
+    depends_on:
+      api: { condition: service_healthy }
+      frontend: { condition: service_healthy }
+
 volumes:
   dbdata:

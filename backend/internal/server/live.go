@@ -1,6 +1,7 @@
 package server
 
 import (
+	_ "embed"
 	"net/http"
 	"time"
 
@@ -41,4 +42,12 @@ func (s *Server) live(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpx.JSON(w, http.StatusOK, out)
 	return nil
+}
+
+//go:embed openapi.yaml
+var openapiSpec []byte
+
+func openapi(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+	_, _ = w.Write(openapiSpec)
 }

@@ -1,0 +1,303 @@
+openapi: 3.0.3
+info:
+  title: EnerjiHat API
+  version: 1.0.0
+  description: |
+    Akıllı sayaç okumaları, tüketim hesabı, tarife/fatura, şebeke topolojisi, kesinti yönetimi ve kayıp-kaçak analizi.
+
+    * Kimlik: `POST /api/v1/auth/login` → `access_token` (15 dk JWT) + `refresh_token` (dönen, tek kullanımlık).
+    * Yetki: her uç yalnızca listelenen rollere açıktır; diğerleri 403. Abone yalnızca kendi verisini görür.
+    * Makineden makineye: sayaç veri toplama sistemi ve çağrı merkezi `X-Ingest-Token` başlığı kullanır.
+    * Hatalar her zaman `{"error":{"code":"…","message":"…","details":{…}}}` biçimindedir.
+    * Durum değiştiren POST'lar `Idempotency-Key` başlığını destekler; ödemede zorunludur.
+    * Büyük listeler keyset sayfalıdır: `?limit=&cursor=` → `{"items":[…],"next_cursor":"…"|null}`.
+servers:
+  - url: http://localhost:8080
+security:
+  - bearer: []
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+    ingest: { type: apiKey, in: header, name: X-Ingest-Token }
+  parameters:
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: false, schema: { type: string, minLength: 8, maxLength: 128 } }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1 } }
+    Cursor: { name: cursor, in: query, schema: { type: string } }
+    Id: { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    From: { name: from, in: query, schema: { type: string, example: "2026-10-01" }, description: RFC3339 veya YYYY-AA-GG }
+    To: { name: to, in: query, schema: { type: string, example: "2026-11-01" } }
+  responses:
+    Error:
+      description: Hata
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: forbidden }
+            message: { type: string }
+            details: { type: object, additionalProperties: true }
+    Tokens:
+      type: object
+      properties:
+        access_token: { type: string }
+        access_expires_at: { type: string, format: date-time }
+        refresh_token: { type: string }
+        refresh_expires_at: { type: string, format: date-time }
+        token_type: { type: string, example: Bearer }
+        user: { $ref: '#/components/schemas/Principal' }
+    Principal:
+      type: object
+      properties:
+        user_id: { type: integer }
+        email: { type: string }
+        role: { type: string, enum: [subscriber, field_crew, billing, operator, analyst, admin] }
+        subscriber_id: { type: integer, nullable: true }
+        crew_id: { type: integer, nullable: true }
+    Reading:
+      type: object
+      required: [meter_id, read_at, active_index_wh]
+      properties:
+        meter_id: { type: integer }
+        read_at: { type: string, format: date-time, description: "15 dk sınırına hizalı (:00 :15 :30 :45)" }
+        active_index_wh: { type: integer, description: Kümülatif aktif endeks (Wh) }
+        reactive_index_varh: { type: integer }
+    IngestResult:
+      type: object
+      properties:
+        batch_id: { type: integer }
+        received: { type: integer }
+        inserted: { type: integer }
+        duplicates: { type: integer }
+        corrections: { type: integer }
+        rejected: { type: integer }
+        rejections: { type: array, items: { type: object, properties: { index: { type: integer }, reason: { type: string } } } }
+    Invoice:
+      type: object
+      properties:
+        id: { type: integer }
+        invoice_no: { type: string }
+        subscriber_id: { type: integer }
+        period_start: { type: string, format: date }
+        period_end: { type: string, format: date }
+        kind: { type: string, enum: [estimated, actual] }
+        status: { type: string, enum: [issued, paid, cancelled, settled] }
+        consumption_wh: { type: integer }
+        estimated_wh: { type: integer }
+        subtotal_kurus: { type: integer }
+        tax_kurus: { type: integer }
+        total_kurus: { type: integer }
+        paid_kurus: { type: integer }
+        input_hash: { type: string }
+        settles_invoice_id: { type: integer, nullable: true }
+        lines: { type: array, items: { $ref: '#/components/schemas/InvoiceLine' } }
+        breakdown: { type: array, items: { type: object, description: "Günlük tüketim; interpolated_slots ve estimated işaretli" } }
+    InvoiceLine:
+      type: object
+      properties:
+        kind: { type: string, enum: [energy, distribution, reactive, energy_tax, fund, vat, settlement] }
+        description: { type: string }
+        quantity: { type: string }
+        unit_price: { type: string }
+        amount_kurus: { type: integer }
+    Outage:
+      type: object
+      properties:
+        id: { type: integer }
+        kind: { type: string, enum: [unplanned, planned] }
+        status: { type: string, enum: [scheduled, detected, confirmed, assigned, in_progress, resolved, cancelled] }
+        fault_node_id: { type: integer }
+        fault_node_code: { type: string }
+        feeder_id: { type: integer }
+        required_skill: { type: string }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time, nullable: true }
+        planned_start: { type: string, format: date-time, nullable: true }
+        planned_end: { type: string, format: date-time, nullable: true }
+        estimated_restore_at: { type: string, format: date-time, nullable: true }
+        affected_count: { type: integer }
+        report_count: { type: integer }
+        version: { type: integer }
+    Signal:
+      type: object
+      required: [source]
+      properties:
+        source: { type: string, enum: [call, last_gasp, restore] }
+        external_id: { type: string, description: "Aynı kaynak + kimlik tekrar gelirse 'replayed'" }
+        subscriber_id: { type: integer }
+        meter_id: { type: integer }
+        received_at: { type: string, format: date-time }
+        note: { type: string }
+paths:
+  /health:
+    get: { summary: Sağlık (veritabanı dahil), security: [], tags: [Sistem], responses: { '200': { description: ok }, '503': { description: veritabanı erişilemiyor } } }
+  /metrics:
+    get: { summary: Prometheus metrikleri, security: [], tags: [Sistem], responses: { '200': { description: text/plain 0.0.4 } } }
+  /openapi.yaml:
+    get: { summary: Bu doküman, security: [], tags: [Sistem], responses: { '200': { description: YAML } } }
+  /api/v1/auth/login:
+    post:
+      tags: [Kimlik]
+      security: []
+      summary: Giriş
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } } } } }
+      responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Tokens' } } } }, '401': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /api/v1/auth/refresh:
+    post:
+      tags: [Kimlik]
+      security: []
+      summary: Refresh token rotasyonu (eski token tekrar kullanılırsa tüm aile iptal — refresh_reused)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { refresh_token: { type: string } } } } } }
+      responses: { '200': { description: yeni token çifti }, '401': { $ref: '#/components/responses/Error' } }
+  /api/v1/auth/logout:
+    post: { tags: [Kimlik], security: [], summary: Oturumu kapat, responses: { '204': { description: ok } } }
+  /api/v1/auth/me:
+    get: { tags: [Kimlik], summary: Oturumdaki kullanıcı (tüm roller), responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Principal' } } } }, '401': { $ref: '#/components/responses/Error' } } }
+  /api/v1/live:
+    get: { tags: [Sistem], summary: Canlılık özeti (son okuma partisi, açık kesintiler…) — tüm roller, responses: { '200': { description: ok } } }
+  /api/v1/admin/users:
+    get: { tags: [Yönetim], summary: Kullanıcılar (admin), parameters: [{ $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Cursor' }], responses: { '200': { description: ok }, '403': { $ref: '#/components/responses/Error' } } }
+    post: { tags: [Yönetim], summary: Kullanıcı oluştur (admin), parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '201': { description: ok }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } } }
+  /api/v1/admin/audit:
+    get: { tags: [Yönetim], summary: Eklemeli-yalnız denetim kaydı (admin), parameters: [{ name: entity, in: query, schema: { type: string } }, { $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Cursor' }], responses: { '200': { description: ok } } }
+  /api/v1/subscribers:
+    get: { tags: [F-1 Abone], summary: Abone listesi (personel), parameters: [{ name: q, in: query, schema: { type: string } }, { name: category, in: query, schema: { type: string } }, { $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Cursor' }], responses: { '200': { description: ok } } }
+    post:
+      tags: [F-1 Abone]
+      summary: Abone + ilk sayaç kaydı (billing, admin)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full_name, address, category, pole_id, tariff_id, contract_kw, meter_serial_no]
+              properties: { full_name: { type: string }, address: { type: string }, category: { type: string }, pole_id: { type: integer, description: Yalnızca direk }, tariff_id: { type: integer }, contract_kw: { type: number }, meter_serial_no: { type: string }, installed_at: { type: string, format: date-time } }
+      responses: { '201': { description: ok }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /api/v1/subscribers/{id}:
+    get: { tags: [F-1 Abone], summary: Abone, sayaçları ve besleme yolu (abone yalnızca kendisi), parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: ok }, '403': { $ref: '#/components/responses/Error' } } }
+  /api/v1/subscribers/{id}/meter-change:
+    post:
+      tags: [T-1 Okuma]
+      summary: Sayaç değişimi (field_crew, admin)
+      parameters: [{ $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { at: { type: string, format: date-time }, final_index_wh: { type: integer }, new_serial_no: { type: string }, initial_index_wh: { type: integer } } } } } }
+      responses: { '201': { description: yeni sayaç }, '422': { $ref: '#/components/responses/Error' } }
+  /api/v1/tariffs:
+    get: { tags: [F-4 Fatura], summary: Tarifeler (personel), responses: { '200': { description: ok } } }
+  /api/v1/ingest/meters:
+    get: { tags: [F-2 Okuma], security: [{ ingest: [] }, { bearer: [] }], summary: Aktif sayaçlar (simülatör/head-end için), responses: { '200': { description: ok } } }
+  /api/v1/readings/batch:
+    post:
+      tags: [F-2 Okuma]
+      security: [{ ingest: [] }, { bearer: [] }]
+      summary: Toplu 15 dk okuma (en çok 50 000) — tekrarlar yok sayılır, farklı değer düzeltme sayılır
+      requestBody: { content: { application/json: { schema: { type: object, properties: { readings: { type: array, items: { $ref: '#/components/schemas/Reading' } } } } } } }
+      responses: { '202': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/IngestResult' } } } }, '401': { $ref: '#/components/responses/Error' } }
+  /api/v1/readings:
+    post: { tags: [F-2 Okuma], summary: Elle tek okuma (field_crew, admin), requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Reading' } } } }, responses: { '201': { description: ok }, '422': { $ref: '#/components/responses/Error' } } }
+  /api/v1/readings/stats:
+    get: { tags: [F-2 Okuma], summary: Son 1 saatin okuma alma istatistikleri, responses: { '200': { description: ok } } }
+  /api/v1/meters/{id}/readings:
+    get: { tags: [F-2 Okuma], summary: Ham okumalar (personel), parameters: [{ $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/From' }, { $ref: '#/components/parameters/To' }], responses: { '200': { description: ok } } }
+  /api/v1/subscribers/{id}/consumption:
+    get:
+      tags: [F-3 Tüketim]
+      summary: Tüketim — granularity=day (gündüz/puant/gece, en yüksek talep) veya 15m (slot kalitesi measured/interpolated/corrected/reset/meter_change)
+      parameters: [{ $ref: '#/components/parameters/Id' }, { name: granularity, in: query, schema: { type: string, enum: [day, 15m] } }, { $ref: '#/components/parameters/From' }, { $ref: '#/components/parameters/To' }]
+      responses: { '200': { description: ok }, '403': { $ref: '#/components/responses/Error' } }
+  /api/v1/admin/consumption/recompute:
+    post: { tags: [T-1 Okuma], summary: Kirli sayaç-gün kuyruğunu şimdi işle (admin), responses: { '200': { description: ok } } }
+  /api/v1/billing/invoices/generate:
+    post:
+      tags: [F-4 Fatura]
+      summary: Dönem faturası üret (billing, admin). Aynı girdi → aynı fatura (200); yeni → 201; girdi değiştiyse 409 (reissue=true ile yeniden kes)
+      requestBody: { content: { application/json: { schema: { type: object, required: [subscriber_id, period], properties: { subscriber_id: { type: integer }, period: { type: string, example: "2026-10" }, reissue: { type: boolean } } } } } }
+      responses: { '200': { description: değişmedi }, '201': { description: kesildi }, '409': { $ref: '#/components/responses/Error' } }
+  /api/v1/billing/runs:
+    post: { tags: [F-4 Fatura], summary: Toplu dönem faturalama, responses: { '200': { description: ok } } }
+  /api/v1/invoices:
+    get: { tags: [F-4 Fatura], summary: Fatura listesi (billing, analyst, admin), parameters: [{ name: period, in: query, schema: { type: string } }, { name: status, in: query, schema: { type: string } }, { $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Cursor' }], responses: { '200': { description: ok } } }
+  /api/v1/invoices/{id}:
+    get: { tags: [F-4 Fatura], summary: Fatura + kalemler + günlük döküm (abone yalnızca kendisi, aksi 404), parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Invoice' } } } }, '404': { $ref: '#/components/responses/Error' } } }
+  /api/v1/invoices/{id}/payments:
+    post:
+      tags: [F-4 Fatura]
+      summary: Ödeme (Idempotency-Key zorunlu; fazla ödeme 409)
+      parameters: [{ $ref: '#/components/parameters/Id' }, { name: Idempotency-Key, in: header, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { amount_kurus: { type: integer } } } } } }
+      responses: { '201': { description: ok }, '400': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+  /api/v1/subscribers/{id}/invoices:
+    get: { tags: [F-4 Fatura], summary: Abonenin faturaları, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: ok } } }
+  /api/v1/subscribers/{id}/invoice-preview:
+    get: { tags: [F-4 Fatura], summary: Kaydetmeden fatura önizleme / tahmini fatura, parameters: [{ $ref: '#/components/parameters/Id' }, { name: period, in: query, required: true, schema: { type: string } }], responses: { '200': { description: ok } } }
+  /api/v1/network/tree:
+    get: { tags: [F-5 Şebeke], summary: "Topoloji ağacı (alt ağaç abone sayılarıyla)", parameters: [{ name: root, in: query, schema: { type: integer } }], responses: { '200': { description: ok } } }
+  /api/v1/network/nodes/{id}/impact:
+    get: { tags: [T-3 Topoloji], summary: Bu düğümde arıza olursa etkilenecek aboneler, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: ok } } }
+  /api/v1/network/switch:
+    post:
+      tags: [T-3 Topoloji]
+      summary: Anahtarlama — düğümü yeni ebeveyne taşı (operator, admin). Döngü → 409 topology_cycle
+      requestBody: { content: { application/json: { schema: { type: object, properties: { node_id: { type: integer }, new_parent_id: { type: integer } } } } } }
+      responses: { '200': { description: ok }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /api/v1/network/nodes/{id}/restore-normal:
+    post: { tags: [T-3 Topoloji], summary: Normal beslemeye dön, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: ok } } }
+  /api/v1/outages:
+    get: { tags: [F-6 Kesinti], summary: Kesintiler (open=true açıklar), parameters: [{ name: open, in: query, schema: { type: boolean } }, { name: status, in: query, schema: { type: string } }, { $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Cursor' }], responses: { '200': { description: ok } } }
+    post:
+      tags: [F-6 Kesinti]
+      summary: Kesinti kaydı (plansız/planlı). Planlı kesinti üst/alt düğümde zamanca çakışırsa 409 planned_overlap
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { kind: { type: string, enum: [unplanned, planned] }, fault_node_id: { type: integer }, cause: { type: string }, started_at: { type: string, format: date-time }, planned_start: { type: string, format: date-time }, planned_end: { type: string, format: date-time } } } } } }
+      responses: { '201': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Outage' } } } }, '409': { $ref: '#/components/responses/Error' } }
+  /api/v1/outages/{id}:
+    get: { tags: [F-6 Kesinti], summary: Kesinti + durum geçmişi + etkilenen/geri gelen, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: ok } } }
+  /api/v1/outages/{id}/transition:
+    post:
+      tags: [F-6 Kesinti]
+      summary: Durum makinesi geçişi (version ile iyimser kilit)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { to: { type: string }, note: { type: string }, version: { type: integer } } } } } }
+      responses: { '200': { description: ok }, '409': { $ref: '#/components/responses/Error' } }
+  /api/v1/outages/{id}/signals:
+    get: { tags: [T-5 Kümeleme], summary: Kesintiye bağlanan bildirimler, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: ok } } }
+  /api/v1/outages/{id}/dispatch:
+    post: { tags: [T-5 Kümeleme], summary: En yakın yetkin boş ekibi ata (çift atama yok), parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '201': { description: atama + ETR }, '409': { $ref: '#/components/responses/Error' } } }
+  /api/v1/outages/{id}/release:
+    post: { tags: [T-5 Kümeleme], summary: Ekibi geri çek, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: ok } } }
+  /api/v1/outage-signals:
+    post:
+      tags: [T-5 Kümeleme]
+      security: [{ ingest: [] }, { bearer: [] }]
+      summary: Arama / son nefes / enerji geldi bildirimi — aynı besleyici + zaman penceresinde tek olaya kümelenir
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Signal' } } } }
+      responses: { '201': { description: yeni olay }, '202': { description: bağlandı / mükerrer / replay / restore } }
+  /api/v1/outage-signals/batch:
+    post: { tags: [T-5 Kümeleme], security: [{ ingest: [] }, { bearer: [] }], summary: "Toplu bildirim (en çok 2000)", responses: { '202': { description: ok } } }
+  /api/v1/crews:
+    get: { tags: [F-6 Kesinti], summary: Ekipler ve aktif görevleri, responses: { '200': { description: ok } } }
+  /api/v1/crew/me:
+    get: { tags: [F-6 Kesinti], summary: Saha ekibinin kendi görevi (field_crew), responses: { '200': { description: ok } } }
+  /api/v1/crew/me/transition:
+    post: { tags: [F-6 Kesinti], summary: Ekip kendi işini in_progress / resolved yapar, responses: { '200': { description: ok }, '409': { $ref: '#/components/responses/Error' } } }
+  /api/v1/me/outages:
+    get: { tags: [F-6 Kesinti], summary: Abonenin beslemesindeki açık kesintiler (subscriber), responses: { '200': { description: ok } } }
+  /api/v1/reports/reliability:
+    get: { tags: [T-3 Topoloji], summary: "SAIDI / SAIFI / CAIDI (IEEE 1366, 3 dk üstü)", parameters: [{ $ref: '#/components/parameters/From' }, { $ref: '#/components/parameters/To' }, { name: feeder_id, in: query, schema: { type: integer } }], responses: { '200': { description: ok } } }
+  /api/v1/analytics/loss/run:
+    post: { tags: [T-4 Kayıp-kaçak], summary: Trafo dengesi + şüpheli abone analizi (analyst, admin), requestBody: { content: { application/json: { schema: { type: object, properties: { as_of: { type: string }, filters: { type: boolean } } } } } }, responses: { '200': { description: ok } } }
+  /api/v1/analytics/loss/transformers:
+    get: { tags: [F-7 Rapor], summary: Trafo kayıp raporu, parameters: [{ $ref: '#/components/parameters/From' }, { $ref: '#/components/parameters/To' }], responses: { '200': { description: ok } } }
+  /api/v1/analytics/suspects:
+    get: { tags: [T-4 Kayıp-kaçak], summary: Şüpheli aboneler (skora göre keyset), parameters: [{ name: status, in: query, schema: { type: string } }, { name: rule, in: query, schema: { type: string } }, { $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Cursor' }], responses: { '200': { description: ok } } }
+  /api/v1/analytics/suspects/{id}:
+    get: { tags: [T-4 Kayıp-kaçak], summary: Şüpheli ayrıntısı + gerekçe, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: ok } } }
+  /api/v1/analytics/suspects/{id}/review:
+    post: { tags: [T-4 Kayıp-kaçak], summary: Doğrula / yanlış alarm, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: ok }, '409': { $ref: '#/components/responses/Error' } } }
+  /api/v1/analytics/loss/evaluation:
+    get: { tags: [T-4 Kayıp-kaçak], summary: Simülatör yer gerçeğine göre precision/recall (yalnız demo verisi), responses: { '200': { description: ok } } }

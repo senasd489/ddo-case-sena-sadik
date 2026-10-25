@@ -107,3 +107,14 @@ func TestGridAndOutageAPI(t *testing.T) {
 		t.Fatalf("history %+v", detail)
 	}
 }
+
+func TestOutageListWithoutFilter(t *testing.T) {
+	e := newEnv(t)
+	op := e.login("operator@enerjihat.local")
+	e.do("POST", "/api/v1/outages", op.AccessToken, map[string]any{"kind": "unplanned", "fault_node_id": e.nodeID("TR-0001-F1")})
+	var all struct{ Items []any }
+	e.do("GET", "/api/v1/outages?limit=5", op.AccessToken, nil).json(t, &all)
+	if len(all.Items) != 1 {
+		t.Fatalf("unfiltered outage list returned %d items", len(all.Items))
+	}
+}

@@ -179,7 +179,7 @@ func (h *Handlers) list(w http.ResponseWriter, r *http.Request) error {
 		statuses = []string{"scheduled", "detected", "confirmed", "assigned", "in_progress"}
 	}
 	rows, err := h.pool.Query(r.Context(), `SELECT `+outageCols+` FROM outages o JOIN network_nodes n ON n.id = o.fault_node_id
-		WHERE o.id < $1 AND (cardinality($2::text[]) = 0 OR o.status = ANY($2)) AND ($3 = '' OR o.kind = $3)
+		WHERE o.id < $1 AND (coalesce(cardinality($2::text[]), 0) = 0 OR o.status = ANY($2)) AND ($3 = '' OR o.kind = $3)
 		ORDER BY o.id DESC LIMIT $4`, before, statuses, q.Get("kind"), pg.Limit+1)
 	if err != nil {
 		return err

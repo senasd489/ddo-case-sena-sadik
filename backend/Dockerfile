@@ -7,7 +7,8 @@ COPY go.mod go.sum ./
 COPY vendor ./vendor
 COPY . .
 RUN go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
- && go build -trimpath -ldflags="-s -w" -o /out/simulator ./cmd/simulator
+ && go build -trimpath -ldflags="-s -w" -o /out/simulator ./cmd/simulator \
+ && go build -trimpath -ldflags="-s -w" -o /out/verify ./cmd/verify
 
 # distroless/static: kabuk yok, paket yöneticisi yok, kullanıcı 65532 (nonroot)
 FROM gcr.io/distroless/static-debian12:nonroot AS api
@@ -21,3 +22,8 @@ FROM gcr.io/distroless/static-debian12:nonroot AS simulator
 COPY --from=build /out/simulator /app/simulator
 USER nonroot:nonroot
 ENTRYPOINT ["/app/simulator"]
+
+FROM gcr.io/distroless/static-debian12:nonroot AS verify
+COPY --from=build /out/verify /app/verify
+USER nonroot:nonroot
+ENTRYPOINT ["/app/verify"]

@@ -48,6 +48,7 @@ func (s *Server) Router() http.Handler {
 
 	r.Get("/health", s.health)
 	r.Handle("/metrics", metrics.Handler())
+	r.Get("/openapi.yaml", openapi)
 
 	r.Group(func(r chi.Router) {
 		r.Use(httpx.Timeout(s.cfg.RequestTimeout))

@@ -30,6 +30,12 @@ lint:
 fmt:
 	cd backend && gofmt -w $$(find . -name '*.go' -not -path './vendor/*')
 
+verify:        ## Tüm özellikleri ve zorlu görevleri uçtan uca dener, PASS/FAIL tablosu basar
+	@test -f .env || cp .env.example .env
+	$(COMPOSE) up --build -d
+	./scripts/wait-healthy.sh 300
+	$(COMPOSE) --profile verify run --rm --build verify
+
 reset-demo:    ## Verileri ilk seed haline döndürür (şema silinip yeniden kurulur)
 	$(COMPOSE) run --rm migrate reset
 	$(COMPOSE) restart api simulator
