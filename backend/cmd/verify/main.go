@@ -181,8 +181,10 @@ func ingestReadings(rs []readingT) map[string]any {
 	return r.J()
 }
 
-func recompute() {
-	expectStatus(call("POST", "/api/v1/admin/consumption/recompute", login("admin"), nil), 200, "recompute")
+// recompute processes only this subscriber's queued meter-days, so the check
+// does not wait for the simulator's initial backlog.
+func recompute(sub int64) {
+	expectStatus(call("POST", fmt.Sprintf("/api/v1/admin/consumption/recompute?subscriber_id=%d", sub), login("admin"), nil), 200, "recompute")
 }
 
 func localMidnight(daysAgo int) time.Time {
@@ -376,7 +378,7 @@ func runChecks() {
 		return "97 yazıldı; tekrar parti 11 tekrar/0 yeni; :07 okuması reddedildi"
 	})
 	check("F-3", "Tüketim ve talep hesaplama", func() string {
-		recompute()
+		recompute(subID)
 		d := day.Format("2006-01-02")
 		r := call("GET", fmt.Sprintf("/api/v1/subscribers/%d/consumption?granularity=day&from=%s&to=%s", subID, d, day.AddDate(0, 0, 1).Format("2006-01-02")), login("fatura"), nil)
 		expectStatus(r, 200, "günlük tüketim")
@@ -429,7 +431,7 @@ func runChecks() {
 			nrs = append(nrs, readingT{newMeter, at(i), int64(i-61) * 100, 0})
 		}
 		ingestReadings(nrs)
-		recompute()
+		recompute(subID)
 		r = call("GET", fmt.Sprintf("/api/v1/subscribers/%d/consumption?granularity=15m&from=%s&to=%s", subID, d2.Format("2006-01-02"), d2.AddDate(0, 0, 1).Format("2006-01-02")), login("fatura"), nil)
 		expectStatus(r, 200, "15 dk tüketim")
 		var out struct {
@@ -461,7 +463,7 @@ func runChecks() {
 			idx += 120
 		}
 		ingestReadings(rs)
-		recompute()
+		recompute(s2)
 		gen := func() resp {
 			return call("POST", "/api/v1/billing/invoices/generate", login("fatura"), map[string]any{"subscriber_id": s2, "period": "2026-09"})
 		}
@@ -487,7 +489,7 @@ func runChecks() {
 			idx += 120
 		}
 		ingestReadings(rs)
-		recompute()
+		recompute(s2)
 		r = gen()
 		expectStatus(r, 201, "gerçek fatura")
 		var act struct {
@@ -652,7 +654,7 @@ func runChecks() {
 		p2 := plan(pole1.ID, st.Add(time.Hour), st.Add(3*time.Hour))
 		expect(p2.Status == 409 && p2.Code() == "planned_overlap", "alt düğüm çakışması: %d", p2.Status)
 		// iptal edip temizle
-		call("POST", fmt.Sprintf("/api/v1/outages/%d/transition", int64(num(p1.J()["id"]))), op, map[string]any{"to": "cancelled"})
+		expectStatus(call("POST", fmt.Sprintf("/api/v1/outages/%d/transition", int64(num(p1.J()["id"]))), op, map[string]any{"to": "cancelled"}), 200, "gelecekteki planlı kesintiyi iptal")
 		rel := call("GET", "/api/v1/reports/reliability?from=2026-01-01&to=2027-01-01", login("analist"), nil)
 		expectStatus(rel, 200, "SAIDI/SAIFI")
 		j := rel.J()

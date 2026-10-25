@@ -210,13 +210,24 @@ func Recompute(ctx context.Context, tx pgx.Tx, days []MeterDay) error {
 //
 // Claims older than five minutes (crashed worker) are taken over.
 func ProcessDirty(ctx context.Context, pool *pgxpool.Pool, limit int) (int, error) {
+	return processDirty(ctx, pool, limit, nil)
+}
+
+// ProcessDirtyFor is ProcessDirty restricted to the given meters (used by
+// the admin "recompute now" endpoint so it never waits for a large backlog).
+func ProcessDirtyFor(ctx context.Context, pool *pgxpool.Pool, limit int, meters []int64) (int, error) {
+	return processDirty(ctx, pool, limit, meters)
+}
+
+func processDirty(ctx context.Context, pool *pgxpool.Pool, limit int, meters []int64) (int, error) {
 	rows, err := pool.Query(ctx, `
 		UPDATE consumption_dirty d SET claimed_at = now()
 		FROM (SELECT meter_id, day FROM consumption_dirty
-		      WHERE claimed_at IS NULL OR marked_at > claimed_at OR claimed_at < now() - interval '5 minutes'
+		      WHERE (claimed_at IS NULL OR marked_at > claimed_at OR claimed_at < now() - interval '5 minutes')
+		        AND ($2::bigint[] IS NULL OR meter_id = ANY($2))
 		      ORDER BY day, meter_id LIMIT $1 FOR UPDATE SKIP LOCKED) p
 		WHERE d.meter_id = p.meter_id AND d.day = p.day
-		RETURNING d.meter_id, d.day, d.claimed_at`, limit)
+		RETURNING d.meter_id, d.day, d.claimed_at`, limit, meters)
 	if err != nil {
 		return 0, err
 	}

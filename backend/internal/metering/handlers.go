@@ -326,10 +326,37 @@ func (h *Handlers) stats(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// recompute processes the dirty queue now. With ?subscriber_id= only that
+// subscriber's meters are processed (fast even while a large backlog, e.g. the
+// simulator's initial catch-up, is still being worked off in the background).
 func (h *Handlers) recompute(w http.ResponseWriter, r *http.Request) error {
-	n, err := DrainDirty(r.Context(), h.pool, 5000)
-	if err != nil {
-		return err
+	var meters []int64
+	if v := r.URL.Query().Get("subscriber_id"); v != "" {
+		sub, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return httpx.BadRequest("subscriber_id geçersiz")
+		}
+		rows, err := h.pool.Query(r.Context(), `SELECT id FROM meters WHERE subscriber_id = $1`, sub)
+		if err != nil {
+			return err
+		}
+		if meters, err = pgx.CollectRows(rows, pgx.RowTo[int64]); err != nil {
+			return err
+		}
+		if len(meters) == 0 {
+			return httpx.ErrNotFound
+		}
+	}
+	n := 0
+	for {
+		k, err := ProcessDirtyFor(r.Context(), h.pool, 5000, meters)
+		if err != nil {
+			return err
+		}
+		n += k
+		if k == 0 {
+			break
+		}
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"processed_meter_days": n})
 	return nil
