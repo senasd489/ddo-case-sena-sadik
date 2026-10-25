@@ -363,3 +363,31 @@ func TestRestoreSignalsAutoResolve(t *testing.T) {
 		t.Fatalf("late restore %+v", r)
 	}
 }
+
+func TestFreshReadingsCloseOutageWhenRestoreMessageLost(t *testing.T) {
+	pool := testutil.NewDB(t)
+	start := time.Now().Add(-time.Hour).Truncate(15 * time.Minute)
+	subs := subsOnFeeder(t, pool, "TR-0002-F3", 1)
+	r, _ := Ingest(ctx, pool, sig("last_gasp", subs[0], start, "lost-1"))
+	o, _ := grid.GetOutage(ctx, pool, r.OutageID, false)
+	ids, _ := grid.AffectedSubscribers(ctx, pool, o.FaultNodeID)
+	_, _ = pool.Exec(ctx, `SELECT ensure_reading_partitions(current_date - 2, current_date + 1)`)
+	// Bir abone hariç hepsinden kesinti sonrası okuma gelir.
+	for _, id := range ids[1:] {
+		if _, err := pool.Exec(ctx, `INSERT INTO readings (meter_id, read_at, active_index_wh) SELECT m.id, $2, 1000 FROM meters m WHERE m.subscriber_id = $1`,
+			id, start.Add(30*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := ReconcileFromReadings(ctx, pool); err != nil || n != 0 {
+		t.Fatalf("resolved too early: %d %v", n, err)
+	}
+	_, _ = pool.Exec(ctx, `INSERT INTO readings (meter_id, read_at, active_index_wh) SELECT m.id, $2, 1000 FROM meters m WHERE m.subscriber_id = $1`, ids[0], start.Add(45*time.Minute))
+	if n, err := ReconcileFromReadings(ctx, pool); err != nil || n != 1 {
+		t.Fatalf("reconcile: %d %v", n, err)
+	}
+	o, _ = grid.GetOutage(ctx, pool, r.OutageID, false)
+	if o.Status != "resolved" {
+		t.Fatalf("status %s", o.Status)
+	}
+}

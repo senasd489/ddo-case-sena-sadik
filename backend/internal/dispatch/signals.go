@@ -309,3 +309,54 @@ func restoreTx(ctx context.Context, tx pgx.Tx, sigID int64, s Signal) (*SignalRe
 	}
 	return res, nil
 }
+
+// ReconcileFromReadings treats a fresh register reading from an affected
+// meter as proof that its supply is back (an AMI meter can only report when
+// energised). It closes such interruptions and resolves outages that have
+// nobody left without power. This keeps outages from staying open forever if
+// a "power restored" message was lost (e.g. the head-end restarted).
+func ReconcileFromReadings(ctx context.Context, pool *pgxpool.Pool) (int, error) {
+	rows, err := pool.Query(ctx, `
+		UPDATE outage_affected a SET restored_at = r.read_at
+		FROM outages o, meters m,
+		     LATERAL (SELECT read_at FROM readings rd WHERE rd.meter_id = m.id AND rd.read_at > o.started_at + interval '15 minutes'
+		              AND rd.received_at > o.started_at ORDER BY read_at LIMIT 1) r
+		WHERE o.id = a.outage_id AND o.kind = 'unplanned' AND o.status IN ('detected','confirmed','assigned','in_progress')
+		  AND a.restored_at IS NULL AND m.subscriber_id = a.subscriber_id AND m.removed_at IS NULL
+		RETURNING a.outage_id`)
+	if err != nil {
+		return 0, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return 0, err
+	}
+	seen := map[int64]bool{}
+	resolved := 0
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+			var remaining int
+			var status string
+			if err := tx.QueryRow(ctx, `UPDATE outages SET affected_count = (SELECT count(*) FROM outage_affected WHERE outage_id = $1 AND restored_at IS NULL),
+				updated_at = now() WHERE id = $1 RETURNING affected_count, status`, id).Scan(&remaining, &status); err != nil {
+				return err
+			}
+			if remaining > 0 || !grid.CanTransition("unplanned", status, "resolved") {
+				return nil
+			}
+			_, err := grid.TransitionTx(ctx, tx, id, "resolved", 0, "otomatik: etkilenen tüm sayaçlardan yeniden okuma geldi", -1)
+			if err == nil {
+				resolved++
+			}
+			return err
+		})
+		if err != nil {
+			return resolved, err
+		}
+	}
+	return resolved, nil
+}

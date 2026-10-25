@@ -64,6 +64,7 @@ func (s *Server) Router() http.Handler {
 				// Idempotency-Key gönderilen her POST için ilk cevap saklanır ve tekrar oynatılır.
 				r.Use(idempotency.Middleware(s.pool, false))
 				r.Get("/auth/me", auth.Me)
+				r.Get("/live", httpx.H(s.live))
 				users.New(s.pool).Mount(r)
 				customers.New(s.pool).Mount(r)
 				meter.Mount(r)
@@ -127,6 +128,9 @@ func (s *Server) RunBackground(ctx context.Context) {
 			if n == 0 {
 				break
 			}
+		}
+		if _, err := dispatch.ReconcileFromReadings(ctx, s.pool); err != nil && ctx.Err() == nil {
+			s.log.Error("outage reconcile", "err", err.Error())
 		}
 		if s.cfg.AutoDispatch {
 			if _, err := dispatch.AutoDispatch(ctx, s.pool, 20); err != nil && ctx.Err() == nil {
