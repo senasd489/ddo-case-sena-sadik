@@ -24,7 +24,9 @@ func Record(ctx context.Context, q db.Querier, e Entry) error {
 	var actorID *int64
 	var role *string
 	if p := auth.FromContext(ctx); p != nil {
-		actorID = &p.UserID
+		if p.UserID > 0 {
+			actorID = &p.UserID
+		}
 		r := string(p.Role)
 		role = &r
 	}

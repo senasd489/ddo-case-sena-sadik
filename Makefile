@@ -1,7 +1,7 @@
 # EnerjiHat — kısayol komutları
 COMPOSE ?= docker compose
 
-.PHONY: up down logs ps test cover lint verify load chaos reset-demo fmt
+.PHONY: up down logs ps test cover lint verify load chaos reset-demo fmt bench-t1
 
 up:            ## Tüm sistemi derleyip ayağa kaldırır
 	@test -f .env || cp .env.example .env
@@ -29,3 +29,10 @@ lint:
 
 fmt:
 	cd backend && gofmt -w $$(find . -name '*.go' -not -path './vendor/*')
+
+reset-demo:    ## Verileri ilk seed haline döndürür (şema silinip yeniden kurulur)
+	$(COMPOSE) run --rm migrate reset
+	$(COMPOSE) restart api simulator
+
+bench-t1:      ## T-1 kanıtı: ≈10 milyon okumayı ayrı bir bench veritabanına yazar ve ölçer
+	$(COMPOSE) run --rm migrate bench-t1 $(METERS)

@@ -26,7 +26,7 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	pool := testutil.NewDB(t)
 	cfg := config.Config{JWTSecret: "test-secret-test-secret-test-secret!", AccessTTL: time.Minute,
-		RefreshTTL: time.Hour, RequestTimeout: 10 * time.Second, CORSOrigin: "*"}
+		RefreshTTL: time.Hour, RequestTimeout: 10 * time.Second, CORSOrigin: "*", IngestToken: testIngestToken}
 	s := New(cfg, pool, testutil.Logger())
 	srv := httptest.NewServer(s.Router())
 	t.Cleanup(srv.Close)
@@ -93,3 +93,5 @@ func (e *env) login(email string) tokens {
 	r.json(e.t, &tk)
 	return tk
 }
+
+const testIngestToken = "ingest-test-token-0123456789"

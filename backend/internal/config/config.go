@@ -18,6 +18,8 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	LogLevel        string
 	CORSOrigin      string
+	IngestToken     string
+	WorkerInterval  time.Duration
 }
 
 func Load() (Config, error) {
@@ -31,6 +33,8 @@ func Load() (Config, error) {
 		ShutdownTimeout: envDur("SHUTDOWN_TIMEOUT", 15*time.Second),
 		LogLevel:        env("LOG_LEVEL", "info"),
 		CORSOrigin:      env("CORS_ORIGIN", "http://localhost:3000"),
+		IngestToken:     env("INGEST_TOKEN", ""),
+		WorkerInterval:  envDur("WORKER_INTERVAL", 2*time.Second),
 	}
 	if c.DatabaseURL == "" {
 		return c, fmt.Errorf("DATABASE_URL is required")

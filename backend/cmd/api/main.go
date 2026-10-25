@@ -3,6 +3,7 @@
 //	api            run the HTTP server (default)
 //	api migrate    apply database migrations and exit
 //	api seed       apply migrations, load demo seed data and exit
+//	api bench-t1 [n]  T-1 ölçümü: n sayaç × 1 gün okuma (varsayılan ≈10 milyon)
 //	api reset      drop everything, re-migrate and re-seed (make reset-demo)
 //	api healthcheck  probe GET /health (used by the Docker HEALTHCHECK)
 package main
@@ -19,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/bench"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/config"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/db"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/seed"
@@ -69,6 +71,12 @@ func run(log *slog.Logger) error {
 			return err
 		}
 		return server.Seed(ctx, pool, log, seedOptions())
+	case "bench-t1":
+		meters := 0
+		if len(os.Args) > 2 {
+			meters, _ = strconv.Atoi(os.Args[2])
+		}
+		return bench.RunT1(ctx, cfg.DatabaseURL, bench.T1Options{Meters: meters, Keep: os.Getenv("BENCH_KEEP") == "1"}, os.Stdout)
 	case "", "serve":
 	default:
 		return fmt.Errorf("unknown command %q", cmd)
