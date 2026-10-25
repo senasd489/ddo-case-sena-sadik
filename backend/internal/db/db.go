@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -102,4 +103,23 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) error {
 		log.Info("migration applied", "version", version, "ms", time.Since(start).Milliseconds())
 	}
 	return nil
+}
+
+// Querier is satisfied by *pgxpool.Pool, *pgxpool.Conn and pgx.Tx so that
+// repository code can run either standalone or inside a transaction.
+type Querier interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// Reset drops the public schema and re-applies all migrations. Used only by
+// `make reset-demo`; the append-only audit table is intentionally dropped
+// together with everything else rather than truncated.
+func Reset(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) error {
+	if _, err := pool.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public;`); err != nil {
+		return fmt.Errorf("reset schema: %w", err)
+	}
+	log.Info("schema dropped")
+	return Migrate(ctx, pool, log)
 }

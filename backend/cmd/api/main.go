@@ -3,6 +3,7 @@
 //	api            run the HTTP server (default)
 //	api migrate    apply database migrations and exit
 //	api seed       apply migrations, load demo seed data and exit
+//	api reset      drop everything, re-migrate and re-seed (make reset-demo)
 //	api healthcheck  probe GET /health (used by the Docker HEALTHCHECK)
 package main
 
@@ -14,11 +15,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/config"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/db"
+	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/seed"
 	"github.com/senasd489/ddo-case-sena-sadik/backend/internal/server"
 )
 
@@ -59,7 +62,13 @@ func run(log *slog.Logger) error {
 		if err := db.Migrate(ctx, pool, log); err != nil {
 			return err
 		}
-		return server.Seed(ctx, pool, log)
+		return server.Seed(ctx, pool, log, seedOptions())
+	case "reset":
+		// Demo verisini ilk haline döndürür: şemayı silip yeniden kurar.
+		if err := db.Reset(ctx, pool, log); err != nil {
+			return err
+		}
+		return server.Seed(ctx, pool, log, seedOptions())
 	case "", "serve":
 	default:
 		return fmt.Errorf("unknown command %q", cmd)
@@ -98,6 +107,15 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("shutdown complete")
 	return nil
+}
+
+func seedOptions() seed.Options {
+	n, _ := strconv.Atoi(os.Getenv("SEED_SUBSCRIBERS"))
+	s, _ := strconv.ParseUint(os.Getenv("SIM_SEED"), 10, 64)
+	if s == 0 {
+		s = 42
+	}
+	return seed.Options{Seed: s, Subscribers: n}
 }
 
 func newLogger(level string) *slog.Logger {
